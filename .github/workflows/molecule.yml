@@ -44,6 +44,8 @@ jobs:
           done
       - name: Run Molecule
         working-directory: roles/${{ matrix.role }}
+        env:
+          ANSIBLE_ROLES_PATH: ${{ github.workspace }}/roles
         run: |
           set -o pipefail
           if molecule test --scenario-name default 2>&1 | tee molecule.log; then
