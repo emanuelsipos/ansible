@@ -4,11 +4,19 @@
 
 # Auth key for joining the tailnet.
 # Generate a reusable/ephemeral auth key at https://login.tailscale.com/admin/settings/keys
-# and add it to the Semaphore project variable group as the secret extra
-# variable `tailscale_authkey`. Do not store the key in this repository.
+# and add it to the Semaphore project variable group as the secret environment
+# variable `TAILSCALE_AUTHKEY`. Do not store the key in this repository.
 #
 # tailscale_authkey is required for first-time enrollment. Once a node is joined
 # it can be removed from Semaphore; the node will stay authenticated.
+tailscale_authkey: >-
+  {{
+    lookup(
+      'ansible.builtin.env',
+      'TAILSCALE_AUTHKEY',
+      default=undef()
+    )
+  }}
 
 # Set to true to re-authenticate an already-joined node
 tailscale_force_reauth: false
