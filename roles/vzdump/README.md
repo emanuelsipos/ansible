@@ -26,4 +26,3 @@ vzdump_default_config:
   ionice: 7
   zstd: 4
   lockwait: 10
-  prune-backups: "keep-last=5"
