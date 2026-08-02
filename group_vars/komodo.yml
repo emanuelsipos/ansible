@@ -24,7 +24,11 @@ komodo_core_api_secret: >-
   }}
 enable_server_management: true
 # generate_server_passkey: false
-server_address: "{{ (komodo_ssl_enabled | ternary('https', 'http')) ~ '://' ~ ansible_host ~ ':' ~ komodo_periphery_port }}"
+server_address: >-
+  {{
+    (komodo_ssl_enabled | ternary('https', 'http'))
+    ~ '://' ~ ansible_host ~ ':' ~ komodo_periphery_port
+  }}
 
 allow_overwrite_key_files: true
 

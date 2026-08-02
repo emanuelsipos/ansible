@@ -18,4 +18,6 @@
 
     - name: Show result
       ansible.builtin.debug:
-        msg: "Downloaded: {{ github_release_download_changed }}, Version: {{ github_release_download_resolved_version }}"
+        msg: >-
+          Downloaded: {{ github_release_download_changed }},
+          Version: {{ github_release_download_resolved_version }}

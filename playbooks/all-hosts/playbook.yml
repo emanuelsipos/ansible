@@ -50,7 +50,10 @@
       tags: [vzdump]
   vars:
     smartmon_configuration_lines:
-      - "DEVICESCAN -a -o on -S on -n standby,10,q -m root -M exec /usr/share/smartmontools/smartd-runner -M test -s (S/../.././03|L/../../7/04)"
+      - >-
+        DEVICESCAN -a -o on -S on -n standby,10,q -m root
+        -M exec /usr/share/smartmontools/smartd-runner
+        -M test -s (S/../.././03|L/../../7/04)
 
 - name: Machines
   hosts: machines
