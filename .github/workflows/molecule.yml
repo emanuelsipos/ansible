@@ -44,4 +44,14 @@ jobs:
           done
       - name: Run Molecule
         working-directory: roles/${{ matrix.role }}
-        run: molecule test --scenario-name default
+        run: |
+          set -o pipefail
+          if molecule test --scenario-name default 2>&1 | tee molecule.log; then
+            exit 0
+          fi
+          details=$(tail -40 molecule.log)
+          details=${details//'%'/'%25'}
+          details=${details//$'\n'/'%0A'}
+          details=${details//$'\r'/'%0D'}
+          echo "::error title=Molecule (${{ matrix.role }})::$details"
+          exit 1
