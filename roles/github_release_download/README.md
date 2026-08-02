@@ -79,6 +79,9 @@ an existing destination file.
 | `github_release_download_cron_log_file` | `/var/log/github-release-updater.log` | Log file path |
 | `github_release_download_cron_post_update_command` | (unset) | Command to run after update (e.g., restart service) |
 
+The post-update command is rendered directly into a root-owned script and must
+only contain trusted administrator-supplied configuration.
+
 ### Other
 
 | Variable | Default | Description |
