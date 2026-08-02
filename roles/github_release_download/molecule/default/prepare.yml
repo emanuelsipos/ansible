@@ -1,0 +1,66 @@
+---
+- name: Prepare release API fixture
+  hosts: all
+  tasks:
+    - name: Create fixture directories
+      ansible.builtin.file:
+        path: "/tmp/github-release-fixture/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - test/project/releases
+        - downloads
+
+    - name: Write release asset
+      ansible.builtin.copy:
+        content: "verified release asset\n"
+        dest: /tmp/github-release-fixture/downloads/asset.bin
+        mode: "0644"
+
+    - name: Write checksum asset
+      ansible.builtin.copy:
+        content: "8c76b21b0bac56b7cbdf8558106b98602ccee25504ae1604984f2078e84b009f  asset.bin\n"
+        dest: /tmp/github-release-fixture/downloads/checksums.txt
+        mode: "0644"
+
+    - name: Write release API response
+      ansible.builtin.copy:
+        content: |
+          {
+            "tag_name": "v1.0.0",
+            "assets": [
+              {
+                "name": "asset.bin",
+                "browser_download_url": "http://127.0.0.1:8000/downloads/asset.bin"
+              },
+              {
+                "name": "checksums.txt",
+                "browser_download_url": "http://127.0.0.1:8000/downloads/checksums.txt"
+              }
+            ]
+          }
+        dest: /tmp/github-release-fixture/test/project/releases/latest
+        mode: "0644"
+
+    - name: Start fixture server
+      ansible.builtin.shell: >-
+        nohup python3 -m http.server 8000
+        --directory /tmp/github-release-fixture
+        >/tmp/github-release-fixture/server.log 2>&1 &
+      args:
+        creates: /tmp/github-release-fixture/server.pid
+
+    - name: Record fixture server startup
+      ansible.builtin.copy:
+        content: started
+        dest: /tmp/github-release-fixture/server.pid
+        mode: "0644"
+
+    - name: Wait for fixture API
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8000/test/project/releases/latest
+        return_content: true
+      register: github_release_download_fixture
+      until: github_release_download_fixture.status == 200
+      retries: 10
+      delay: 1

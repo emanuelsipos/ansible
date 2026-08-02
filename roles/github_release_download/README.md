@@ -16,7 +16,7 @@ An Ansible role that downloads files from GitHub releases with version tracking.
 
 - Ansible 2.9+
 - Network access to GitHub API and releases
-- `curl` on target machine (only if using cron auto-update)
+- `curl`, `jq`, and `sha256sum` on the target when cron auto-update is enabled (`curl` and `jq` are installed by the role)
 
 ## Role Variables
 
@@ -34,11 +34,20 @@ An Ansible role that downloads files from GitHub releases with version tracking.
 |----------|---------|-------------|
 | `github_release_download_version` | (unset) | Pin to a specific release tag (e.g. `v8.10.0`). Omit to always track the latest release. |
 
+For executable assets, pin a version and configure one of these verification options:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `github_release_download_checksum` | (unset) | Fixed checksum in `sha256:<digest>` form |
+| `github_release_download_checksum_asset` | (unset) | Release asset containing standard `sha256sum` entries |
+
 ### Authentication
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `github_release_download_token` | (unset) | Optional GitHub API token. Raises rate limit from 60 to 5000 req/hr — recommended when running against many hosts in parallel. |
+| `github_release_download_api_url` | `https://api.github.com/repos` | GitHub-compatible releases API base URL |
+| `github_release_download_token_file` | `/etc/github-release-updater/github.token` | Root-only token file read by the cron updater |
 
 ### File Permissions
 
@@ -58,7 +67,7 @@ An Ansible role that downloads files from GitHub releases with version tracking.
 | `github_release_download_cron_day` | `*` | Cron day of month |
 | `github_release_download_cron_weekday` | `*` | Cron day of week |
 | `github_release_download_cron_month` | `*` | Cron month |
-| `github_release_download_cron_user` | `root` | User to run cron job as |
+| `github_release_download_cron_user` | `root` | Must be `root`; updater files are root-only |
 | `github_release_download_cron_script_dir` | `/opt/github-release-updater` | Where to store update scripts |
 | `github_release_download_cron_log_file` | `/var/log/github-release-updater.log` | Log file path |
 | `github_release_download_cron_post_update_command` | (unset) | Command to run after update (e.g., restart service) |
@@ -216,7 +225,7 @@ When `github_release_download_cron_enabled: true`, the role:
 
 2. Installs a cron job to run this script on your specified schedule
 
-The script is completely standalone and only requires `curl` on the target machine. It doesn't need Ansible or Python to run.
+The script is standalone after deployment and does not require Ansible or Python. It uses `curl`, `jq`, and `sha256sum`; the role installs the first two when cron updates are enabled. API tokens are stored separately in a root-only file rather than embedded in the script.
 
 ## License
 

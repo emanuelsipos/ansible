@@ -1,6 +1,29 @@
 ---
 # tasks/main.yml - Download files from GitHub releases with version checking
 
+- name: Validate required GitHub release variables
+  ansible.builtin.assert:
+    that:
+      - github_release_download_repo is defined
+      - github_release_download_repo is match('^[^/]+/[^/]+$')
+      - github_release_download_asset is defined
+      - github_release_download_asset | length > 0
+      - github_release_download_dest is defined
+      - github_release_download_dest is match('^/')
+      - >-
+        github_release_download_checksum is not defined or
+        github_release_download_checksum is match('^sha256:[a-fA-F0-9]{64}$')
+      - github_release_download_checksum is not defined or github_release_download_checksum_asset is not defined
+      - >-
+        github_release_download_checksum_asset is not defined or
+        github_release_download_checksum_asset | length > 0
+      - >-
+        not (github_release_download_cron_enabled | default(false)) or
+        github_release_download_cron_user == 'root'
+    quiet: true
+    fail_msg: Invalid or missing github_release_download role variables
+  tags: [github_release]
+
 - name: Ensure destination directory exists
   ansible.builtin.file:
     path: "{{ github_release_download_dest | dirname }}"
@@ -42,7 +65,7 @@
 - name: Get release info from GitHub API
   ansible.builtin.uri:
     url: >-
-      https://api.github.com/repos/{{ github_release_download_repo }}/releases/{{
+      {{ github_release_download_api_url }}/{{ github_release_download_repo }}/releases/{{
         'tags/' + github_release_download_version
         if github_release_download_version is defined
         else 'latest'
@@ -55,6 +78,7 @@
         {{ 'Bearer ' + github_release_download_token
            if github_release_download_token is defined else omit }}
   register: github_release_download_release_info
+  no_log: "{{ github_release_download_token is defined }}"
   tags: [github_release]
 
 - name: Set latest version and download URL facts
@@ -64,7 +88,22 @@
       {{ github_release_download_release_info.json.assets
          | selectattr('name', 'equalto', github_release_download_asset)
          | map(attribute='browser_download_url')
-         | first }}
+         | first | default('') }}
+    github_release_download_checksum_url: >-
+      {{ github_release_download_release_info.json.assets
+         | selectattr('name', 'equalto', github_release_download_checksum_asset | default(''))
+         | map(attribute='browser_download_url')
+         | first | default('') }}
+  tags: [github_release]
+
+- name: Validate release assets
+  ansible.builtin.assert:
+    that:
+      - github_release_download_latest_version | length > 0
+      - github_release_download_url | length > 0
+      - github_release_download_checksum_asset is not defined or github_release_download_checksum_url | length > 0
+    quiet: true
+    fail_msg: Requested asset or checksum asset was not found in the GitHub release
   tags: [github_release]
 
 - name: Determine if download is needed
@@ -91,6 +130,12 @@
     mode: "{{ github_release_download_mode }}"
     owner: "{{ github_release_download_owner | default(omit) }}"
     group: "{{ github_release_download_group | default(omit) }}"
+    checksum: >-
+      {{ github_release_download_checksum
+         if github_release_download_checksum is defined
+         else ('sha256:' + github_release_download_checksum_url
+               if github_release_download_checksum_asset is defined
+               else omit) }}
     force: true
   when: github_release_download_needs_update
   register: github_release_download_fetch_result
@@ -115,6 +160,11 @@
   when: github_release_download_cron_enabled | default(false)
   tags: [github_release, cron]
   block:
+    - name: Install cron updater dependencies
+      ansible.builtin.package:
+        name: "{{ github_release_download_cron_packages }}"
+        state: present
+
     - name: Ensure scripts directory exists
       ansible.builtin.file:
         path: "{{ github_release_download_cron_script_dir }}"
@@ -126,11 +176,38 @@
         github_release_download_script_name: >-
           github-release-update-{{ github_release_download_asset | regex_replace('[^a-zA-Z0-9]', '-') }}.sh
 
+    - name: Ensure cron updater token directory exists
+      ansible.builtin.file:
+        path: "{{ github_release_download_token_file | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      when: github_release_download_token is defined
+
+    - name: Store GitHub API token for the cron updater
+      ansible.builtin.copy:
+        content: "{{ github_release_download_token }}\n"
+        dest: "{{ github_release_download_token_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      when: github_release_download_token is defined
+      no_log: true
+
+    - name: Remove an obsolete cron updater token file
+      ansible.builtin.file:
+        path: "{{ github_release_download_token_file }}"
+        state: absent
+      when: github_release_download_token is not defined
+
     - name: Deploy auto-update script
       ansible.builtin.template:
         src: update-script.sh.j2
         dest: "{{ github_release_download_cron_script_dir }}/{{ github_release_download_script_name }}"
-        mode: '0755'
+        owner: root
+        group: root
+        mode: "0700"
 
     - name: Setup cron job for auto-update
       ansible.builtin.cron:

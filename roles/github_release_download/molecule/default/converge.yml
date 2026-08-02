@@ -1,0 +1,83 @@
+---
+- name: Converge
+  hosts: all
+  tasks:
+    - name: Reject invalid required variables
+      block:
+        - name: Run role with an invalid repository
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: invalid
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /tmp/invalid-repository.bin
+
+        - name: Fail if invalid variables were accepted
+          ansible.builtin.fail:
+            msg: Invalid variables were accepted
+      rescue:
+        - name: Record required-variable validation
+          ansible.builtin.set_fact:
+            github_release_download_required_validation_passed: true
+
+    - name: Reject a missing release asset
+      block:
+        - name: Run role with an unknown asset
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/project
+            github_release_download_asset: missing.bin
+            github_release_download_dest: /tmp/missing.bin
+            github_release_download_api_url: http://127.0.0.1:8000
+
+        - name: Fail if missing asset was accepted
+          ansible.builtin.fail:
+            msg: Missing release asset was accepted
+      rescue:
+        - name: Record release-asset validation
+          ansible.builtin.set_fact:
+            github_release_download_asset_validation_passed: true
+
+    - name: Download a verified release asset
+      ansible.builtin.include_role:
+        name: github_release_download
+      vars:
+        github_release_download_repo: test/project
+        github_release_download_asset: asset.bin
+        github_release_download_dest: /opt/test-release/asset.bin
+        github_release_download_api_url: http://127.0.0.1:8000
+        github_release_download_checksum: sha256:8c76b21b0bac56b7cbdf8558106b98602ccee25504ae1604984f2078e84b009f
+        github_release_download_token: molecule-test-token
+        github_release_download_token_file: /etc/test-release/github.token
+        github_release_download_cron_enabled: true
+        github_release_download_cron_packages: []
+        github_release_download_cron_script_dir: /opt/test-release/updater
+        github_release_download_cron_log_file: /tmp/test-release-updater.log
+
+    - name: Reject an incorrect checksum
+      block:
+        - name: Run role with an incorrect checksum
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/project
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /tmp/bad-checksum.bin
+            github_release_download_api_url: http://127.0.0.1:8000
+            github_release_download_checksum: sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+        - name: Fail if incorrect checksum was accepted
+          ansible.builtin.fail:
+            msg: Incorrect checksum was accepted
+      rescue:
+        - name: Record checksum validation
+          ansible.builtin.set_fact:
+            github_release_download_checksum_validation_passed: true
+
+    - name: Verify rejected inputs
+      ansible.builtin.assert:
+        that:
+          - github_release_download_required_validation_passed | default(false)
+          - github_release_download_asset_validation_passed | default(false)
+          - github_release_download_checksum_validation_passed | default(false)

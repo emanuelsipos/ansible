@@ -22,12 +22,20 @@ github_release_download_mode: "0755"              # File permissions (0755 = rwx
 # Set to the exact tag name (e.g. "v8.10.0"). Leave unset to always track latest.
 # github_release_download_version: "v8.10.0"
 
+# Verify the downloaded asset with either a fixed checksum or a checksum file
+# published in the same GitHub release. The checksum asset must use standard
+# sha256sum format: "<digest>  <filename>".
+# github_release_download_checksum: "sha256:<64-character digest>"
+# github_release_download_checksum_asset: "checksums.txt"
+
 # ==============================================================================
 # GITHUB API AUTHENTICATION (optional)
 # ==============================================================================
 # Provide a GitHub token to avoid rate-limiting (60 req/hr unauthenticated → 5000/hr).
 # Useful when running against many hosts in parallel.
 # github_release_download_token: "{{ lookup('env', 'GITHUB_TOKEN') }}"
+github_release_download_api_url: "https://api.github.com/repos"
+github_release_download_token_file: "/etc/github-release-updater/github.token"
 
 # ==============================================================================
 # DEBUG
@@ -50,6 +58,9 @@ github_release_download_cron_month: "*"
 github_release_download_cron_user: "root"                                # User to run the cron job as
 github_release_download_cron_script_dir: "/opt/github-release-updater"  # Where to store update scripts
 github_release_download_cron_log_file: "/var/log/github-release-updater.log"  # Log file for updates
+github_release_download_cron_packages:
+  - curl
+  - jq
 
 # Optional: command to run after successful update (e.g., restart a service)
 # github_release_download_cron_post_update_command: "systemctl restart myservice"

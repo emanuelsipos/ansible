@@ -16,6 +16,7 @@ FILE_OWNER="{{ github_release_download_owner }}"
 FILE_GROUP="{{ github_release_download_group }}"
 {% endif %}
 LOG_FILE="{{ github_release_download_cron_log_file }}"
+TOKEN_FILE="{{ github_release_download_token_file }}"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
@@ -28,17 +29,19 @@ if [[ -f "$VERSION_FILE" ]]; then
 fi
 
 {% if github_release_download_version is defined %}
-API_URL="https://api.github.com/repos/${REPO}/releases/tags/{{ github_release_download_version }}"
+API_URL="{{ github_release_download_api_url }}/${REPO}/releases/tags/{{ github_release_download_version }}"
 {% else %}
-API_URL="https://api.github.com/repos/${REPO}/releases/latest"
+API_URL="{{ github_release_download_api_url }}/${REPO}/releases/latest"
 {% endif %}
 
-# Get release info from GitHub API
-{% if github_release_download_token is defined %}
-RELEASE_INFO=$(curl -fsSL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer {{ github_release_download_token }}" "$API_URL" 2>/dev/null) || {
-{% else %}
-RELEASE_INFO=$(curl -fsSL -H "Accept: application/vnd.github+json" "$API_URL" 2>/dev/null) || {
-{% endif %}
+# Get release info from GitHub API. Tokens are read from a root-only file and
+# are never rendered into this script.
+CURL_HEADERS=(-H "Accept: application/vnd.github+json")
+if [[ -r "$TOKEN_FILE" ]]; then
+    GITHUB_TOKEN=$(<"$TOKEN_FILE")
+    CURL_HEADERS+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+fi
+RELEASE_INFO=$(curl -fsSL "${CURL_HEADERS[@]}" "$API_URL" 2>/dev/null) || {
     log "ERROR: Failed to fetch release info from GitHub API"
     exit 1
 }
@@ -46,6 +49,9 @@ RELEASE_INFO=$(curl -fsSL -H "Accept: application/vnd.github+json" "$API_URL" 2>
 # Extract version tag and download URL using jq for robust JSON parsing
 LATEST_VERSION=$(echo "$RELEASE_INFO" | jq -r '.tag_name')
 DOWNLOAD_URL=$(echo "$RELEASE_INFO" | jq -r --arg asset "$ASSET" '.assets[] | select(.name == $asset) | .browser_download_url')
+{% if github_release_download_checksum_asset is defined %}
+CHECKSUM_URL=$(echo "$RELEASE_INFO" | jq -r --arg asset "{{ github_release_download_checksum_asset }}" '.assets[] | select(.name == $asset) | .browser_download_url')
+{% endif %}
 
 if [[ -z "$LATEST_VERSION" ]] || [[ "$LATEST_VERSION" == "null" ]]; then
     log "ERROR: Could not determine latest version"
@@ -74,6 +80,29 @@ if ! curl -fsSL -o "$TEMP_FILE" "$DOWNLOAD_URL"; then
     log "ERROR: Failed to download ${DOWNLOAD_URL}"
     exit 1
 fi
+
+{% if github_release_download_checksum is defined %}
+EXPECTED_CHECKSUM="{{ github_release_download_checksum | regex_replace('^sha256:', '') }}"
+ACTUAL_CHECKSUM=$(sha256sum "$TEMP_FILE" | awk '{print $1}')
+if [[ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]]; then
+    log "ERROR: SHA-256 mismatch for ${ASSET}"
+    exit 1
+fi
+{% elif github_release_download_checksum_asset is defined %}
+CHECKSUM_FILE=$(mktemp)
+trap 'rm -f "$TEMP_FILE" "$CHECKSUM_FILE"' EXIT
+if ! curl -fsSL -o "$CHECKSUM_FILE" "$CHECKSUM_URL"; then
+    log "ERROR: Failed to download checksum asset"
+    exit 1
+fi
+EXPECTED_CHECKSUM=$(awk -v asset="$ASSET" '$2 == asset || $2 == "*" asset {print $1; exit}' "$CHECKSUM_FILE")
+ACTUAL_CHECKSUM=$(sha256sum "$TEMP_FILE" | awk '{print $1}')
+if [[ ! "$EXPECTED_CHECKSUM" =~ ^[a-fA-F0-9]{64}$ ]] || \
+   [[ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]]; then
+    log "ERROR: SHA-256 verification failed for ${ASSET}"
+    exit 1
+fi
+{% endif %}
 
 # Ensure destination directory exists
 mkdir -p "$(dirname "$DEST")"

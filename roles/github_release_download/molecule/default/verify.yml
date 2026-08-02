@@ -1,0 +1,31 @@
+---
+- name: Verify
+  hosts: all
+  tasks:
+    - name: Read downloaded asset
+      ansible.builtin.slurp:
+        src: /opt/test-release/asset.bin
+      register: github_release_download_test_asset
+
+    - name: Inspect updater files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/test-release
+        - /etc/test-release/github.token
+        - /opt/test-release/updater/github-release-update-asset-bin.sh
+      register: github_release_download_updater_files
+
+    - name: Read updater script
+      ansible.builtin.slurp:
+        src: /opt/test-release/updater/github-release-update-asset-bin.sh
+      register: github_release_download_updater_script
+
+    - name: Verify release hardening
+      ansible.builtin.assert:
+        that:
+          - (github_release_download_test_asset.content | b64decode) == 'verified release asset\n'
+          - github_release_download_updater_files.results[0].stat.mode == '0700'
+          - github_release_download_updater_files.results[1].stat.mode == '0600'
+          - github_release_download_updater_files.results[2].stat.mode == '0700'
+          - "'molecule-test-token' not in (github_release_download_updater_script.content | b64decode)"
