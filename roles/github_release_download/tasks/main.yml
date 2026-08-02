@@ -194,7 +194,10 @@
     - name: Generate unique script name
       ansible.builtin.set_fact:
         github_release_download_script_name: >-
-          github-release-update-{{ github_release_download_asset | regex_replace('[^a-zA-Z0-9]', '-') }}.sh
+          github-release-update-{{
+            (github_release_download_repo ~ '-' ~ github_release_download_asset)
+            | regex_replace('[^a-zA-Z0-9]', '-')
+          }}.sh
 
     - name: Ensure cron updater token directory exists
       ansible.builtin.file:
@@ -229,9 +232,24 @@
         group: root
         mode: "0700"
 
-    - name: Setup cron job for auto-update
+    - name: Remove obsolete asset-only updater script
+      ansible.builtin.file:
+        path: >-
+          {{ github_release_download_cron_script_dir }}/github-release-update-{{
+            github_release_download_asset | regex_replace('[^a-zA-Z0-9]', '-')
+          }}.sh
+        state: absent
+
+    - name: Remove obsolete asset-only cron job
       ansible.builtin.cron:
         name: "GitHub release auto-update: {{ github_release_download_asset }}"
+        user: "{{ github_release_download_cron_user }}"
+        state: absent
+
+    - name: Setup cron job for auto-update
+      ansible.builtin.cron:
+        name: >-
+          GitHub release auto-update: {{ github_release_download_repo }}/{{ github_release_download_asset }}
         minute: "{{ github_release_download_cron_minute }}"
         hour: "{{ github_release_download_cron_hour }}"
         day: "{{ github_release_download_cron_day }}"

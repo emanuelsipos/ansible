@@ -202,13 +202,13 @@ After running with cron enabled:
 └── curl.ver
 
 /opt/github-release-updater/
-└── github-release-update-curl-amd64.sh   # Standalone update script
+└── github-release-update-moparisthebest-static-curl-curl-amd64.sh
 
 /var/log/
 └── github-release-updater.log            # Update logs
 
 # Cron entry (crontab -l):
-# 30 3 * * * /opt/github-release-updater/github-release-update-curl-amd64.sh
+# 30 3 * * * /opt/github-release-updater/github-release-update-moparisthebest-static-curl-curl-amd64.sh
 ```
 
 ## How the Cron Update Works

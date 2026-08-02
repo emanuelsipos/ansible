@@ -13,12 +13,12 @@
       loop:
         - /etc/test-release
         - /etc/test-release/github.token
-        - /opt/test-release/updater/github-release-update-asset-bin.sh
+        - /opt/test-release/updater/github-release-update-test-project-asset-bin.sh
       register: github_release_download_updater_files
 
     - name: Read updater script
       ansible.builtin.slurp:
-        src: /opt/test-release/updater/github-release-update-asset-bin.sh
+        src: /opt/test-release/updater/github-release-update-test-project-asset-bin.sh
       register: github_release_download_updater_script
 
     - name: Verify release hardening
