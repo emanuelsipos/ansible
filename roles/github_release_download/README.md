@@ -41,6 +41,10 @@ For executable assets, pin a version and configure one of these verification opt
 | `github_release_download_checksum` | (unset) | Fixed checksum in `sha256:<digest>` form |
 | `github_release_download_checksum_asset` | (unset) | Release asset containing standard `sha256sum` entries |
 
+A fixed checksum must be paired with `github_release_download_version`; it
+cannot verify a future release. Use a checksum asset when intentionally
+tracking the latest release.
+
 ### Authentication
 
 | Variable | Default | Description |
