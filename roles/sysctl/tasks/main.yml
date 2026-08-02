@@ -1,0 +1,31 @@
+---
+- name: Load required kernel modules
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ sysctl_modules }}"
+  when: sysctl_modules | length > 0
+  tags: [sysctl, modules]
+
+- name: Persist kernel modules across reboots
+  ansible.builtin.copy:
+    dest: "/etc/modules-load.d/{{ item }}.conf"
+    content: "{{ item }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ sysctl_modules }}"
+  when: sysctl_modules | length > 0
+  tags: [sysctl, modules]
+
+- name: Apply sysctl settings
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: "{{ sysctl_drop_in_file }}"
+    sysctl_set: true
+    state: present
+    reload: false
+  loop: "{{ sysctl_settings | dict2items }}"
+  notify: Reload sysctl
+  tags: [sysctl]

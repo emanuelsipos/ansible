@@ -1,0 +1,15 @@
+---
+journald_retention_days: 90
+journald_retention_system_max_use: 5G
+
+# Combined BBR + ECN sysctl settings for all machines (pve + vps)
+machines_sysctl_settings:
+  net.core.default_qdisc: "fq"
+  net.ipv4.tcp_congestion_control: "bbr"
+  net.ipv4.tcp_ecn: "1"
+  net.ipv4.tcp_ecn_fallback: "1"
+
+machines_sysctl_modules:
+  - tcp_bbr
+
+machines_sysctl_drop_in_file: "/etc/sysctl.d/99-networking.conf"

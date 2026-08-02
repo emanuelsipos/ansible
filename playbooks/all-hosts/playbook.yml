@@ -1,0 +1,78 @@
+---
+- name: Base config for everything
+  hosts: all
+  roles:
+    - role: hifis.unattended_upgrades
+      tags: [base, upgrades]
+    - role: journald_retention
+      tags: [base, journald]
+
+- name: Komodo hosts
+  hosts: komodo
+  tags: [komodo]
+  pre_tasks:
+    - name: Build IPv6 forwarding sysctl settings with detected interface
+      ansible.builtin.set_fact:
+        _komodo_sysctl:
+          net.ipv6.conf.all.forwarding: "1"
+          net.ipv6.conf.all.accept_ra: "2"
+          net.ipv6.conf.default.accept_ra: "2"
+          "net.ipv6.conf.{{ ansible_default_ipv4.interface }}.accept_ra": "2"
+      tags: [networking]
+  roles:
+    - role: geerlingguy.docker
+      tags: [docker]
+      vars:
+        docker_daemon_options:
+          live-restore: true
+          storage-driver: "overlay2"
+          ipv6: true
+    - role: sysctl
+      tags: [networking, sysctl]
+      vars:
+        sysctl_settings: "{{ _komodo_sysctl }}"
+        sysctl_drop_in_file: "/etc/sysctl.d/99-ipv6-forwarding.conf"
+
+- name: Proxmox hosts
+  hosts: pve
+  tags: [pve]
+  roles:
+    - role: sysctl
+      tags: [sysctl]
+      vars:
+        sysctl_settings: "{{ pve_sysctl_settings }}"
+        sysctl_drop_in_file: "{{ pve_sysctl_drop_in_file }}"
+    - role: zram
+      tags: [zram]
+    - role: brianhartsock.smartmontools
+      tags: [smart]
+    - role: vzdump
+      tags: [vzdump]
+  vars:
+    smartmon_configuration_lines:
+      - "DEVICESCAN -a -o on -S on -n standby,10,q -m root -M exec /usr/share/smartmontools/smartd-runner -M test -s (S/../.././03|L/../../7/04)"
+
+- name: Machines
+  hosts: machines
+  tags: [machines]
+  roles:
+    - role: sysctl
+      tags: [networking, sysctl]
+      vars:
+        sysctl_settings: "{{ machines_sysctl_settings }}"
+        sysctl_drop_in_file: "{{ machines_sysctl_drop_in_file }}"
+        sysctl_modules: "{{ machines_sysctl_modules }}"
+
+- name: Backup hosts
+  hosts: backup
+  tags: [backup]
+  roles:
+    - role: github_release_download
+      tags: [curl]
+  vars:
+    github_release_download_repo: "moparisthebest/static-curl"
+    github_release_download_asset: "curl-amd64"
+    github_release_download_dest: "/opt/docker/rustic/curl"
+    github_release_download_mode: "0755"
+    github_release_download_cron_enabled: true
+    github_release_download_debug: true

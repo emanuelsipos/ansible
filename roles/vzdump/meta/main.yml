@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: emanuelsipos
+  description: Manage /etc/vzdump.conf exclude-path entries on Proxmox VE hosts
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+dependencies: []

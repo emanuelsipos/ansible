@@ -1,0 +1,9 @@
+---
+exclude_paths:
+  - ~/.ansible/roles/   # Galaxy-installed roles (never in-project)
+  - collections/        # Galaxy-installed collections (gitignored)
+  - .github/            # CI workflow files are not Ansible content
+  - .yamllint           # linter config, not Ansible content
+  - .ansible-lint       # linter config, not Ansible content
+warn_list:
+  - yaml[line-length]   # long URLs / commands; non-fatal, matches .yamllint level

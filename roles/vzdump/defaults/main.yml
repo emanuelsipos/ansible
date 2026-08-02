@@ -1,0 +1,36 @@
+---
+# List of paths to exclude from vzdump container backups.
+vzdump_default_exclude_paths:
+  - /var/lib/docker/overlay2
+  - /var/lib/docker/image
+  - /var/lib/docker/buildkit
+  - /var/lib/docker/tmp
+  - /var/lib/docker/network
+  - /var/lib/containerd
+  - /var/lib/docker/containers/*/*.log
+  - /dev
+  - /proc
+  - /sys
+  - /run
+  - /tmp
+  - /var/tmp
+  - /var/cache/apt/archives
+  - /var/cache/apk
+  - /var/cache/dnf
+  - /var/log/*/*.gz
+  - /var/log/*.gz
+  - /var/log/*/*.1
+  - /var/log/*.1
+
+vzdump_extra_exclude_paths: []
+vzdump_exclude_paths: "{{ vzdump_default_exclude_paths + vzdump_extra_exclude_paths }}"
+
+# Global vzdump.conf key/value settings
+vzdump_default_config:
+  bwlimit: 102400
+  ionice: 7
+  zstd: 4
+  lockwait: 10
+
+vzdump_extra_config: {}
+vzdump_config: "{{ vzdump_default_config | combine(vzdump_extra_config) }}"

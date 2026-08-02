@@ -1,0 +1,23 @@
+---
+# Sysctl settings for Proxmox hosts
+# - vm.overcommit_memory=1 required for Docker/Redis in LXC containers
+# - kernel.keys.* raised for Docker in LXC (default limits hit with many containers)
+pve_sysctl_settings:
+  vm.overcommit_memory: "1"
+  kernel.keys.maxkeys: "5000"
+  kernel.keys.maxbytes: "500000"
+
+pve_sysctl_drop_in_file: "/etc/sysctl.d/99-pve.conf"
+
+# zram compressed-swap (systemd-zram-generator). 25% of RAM, zstd, priority 100.
+# ram * 0.25 auto-scales per host (~20G on the 80G node, ~16G on the 64G node);
+# add `host_memory_limit` or a host_vars override to cap it.
+zram_devices:
+  zram0:
+    zram_size: "ram * 0.25"
+    compression_algorithm: zstd
+    swap_priority: 100
+zram_swappiness: 10
+
+vzdump_extra_exclude_paths:
+  - /opt/docker/birdnet/data/clips

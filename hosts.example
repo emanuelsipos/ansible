@@ -1,0 +1,26 @@
+[pve]
+hypervisor-01
+
+[vps]
+edge-01
+
+[machines:children]
+pve
+vps
+
+[backup]
+edge-01
+backup-01
+
+# lxc: all Proxmox LXC containers. The implicit 'all' group targets these
+# with the base roles from the all-hosts playbook.
+[lxc]
+application-01
+application-02
+backup-01
+
+[komodo]
+edge-01
+application-01
+application-02
+backup-01

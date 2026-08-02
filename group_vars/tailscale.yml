@@ -1,0 +1,31 @@
+---
+# artis3n.tailscale configuration
+# https://github.com/artis3n/ansible-role-tailscale
+
+# Auth key for joining the tailnet.
+# Generate a reusable/ephemeral auth key at https://login.tailscale.com/admin/settings/keys
+# and store it in an Ansible Vault secret, either here (shared) or per-host in host_vars/.
+#
+# Example — set a shared key in this file:
+#   tailscale_authkey: !vault |
+#     $ANSIBLE_VAULT;1.1;AES256
+#     ...
+#
+# Example — set a per-host key in host_vars/myhost.yml:
+#   tailscale_authkey: !vault |
+#     $ANSIBLE_VAULT;1.1;AES256
+#     ...
+#
+# To encrypt a value:  ansible-vault encrypt_string 'tskey-auth-...' --name tailscale_authkey
+#
+# tailscale_authkey is required for first-time enrollment. Once a node is joined
+# you can remove it from the vars (the node will stay authenticated).
+
+# Set to true to re-authenticate an already-joined node
+tailscale_force_reauth: false
+
+# Additional tailscale up arguments (e.g. "--advertise-exit-node", "--ssh")
+tailscale_args: ""
+
+# Tailscale version — omit to always install latest stable
+# tailscale_version: "1.80.0"

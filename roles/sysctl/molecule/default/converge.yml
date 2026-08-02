@@ -1,0 +1,10 @@
+---
+- name: Converge
+  hosts: all
+  vars:
+    sysctl_settings:
+      net.core.somaxconn: "1024"
+      vm.swappiness: "10"
+    sysctl_drop_in_file: /etc/sysctl.d/99-custom.conf
+  roles:
+    - role: sysctl

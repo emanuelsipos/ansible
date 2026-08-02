@@ -1,0 +1,64 @@
+---
+name: ansible-lint autofix
+
+on:
+  schedule:
+    - cron: "0 0 * * *"  # daily at midnight UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ansible-lint-fix
+  cancel-in-progress: false  # never interrupt a push to the fixes branch
+
+jobs:
+  autofix:
+    name: ansible-lint --fix
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: "3.x"
+      - name: Install Ansible
+        run: pip install ansible-core
+      - name: Install requirements
+        run: |
+          for f in playbooks/*/requirements.yml; do
+            ansible-galaxy install -r "$f"
+          done
+      - name: Apply ansible-lint autofixes
+        # Same action + SHA as the gate (ansible-lint.yml) so Renovate keeps both
+        # on one version. --fix=all applies every transformable rule (fqcn, name,
+        # jinja spacing, ...). yaml is skipped on purpose: its transform collapses
+        # aligned comments and rewraps long lines, which we keep by hand. The gate
+        # still ENFORCES yaml; the bot just declines to auto-fix it.
+        # continue-on-error lets the PR open even if unfixable rules remain.
+        continue-on-error: true
+        uses: ansible/ansible-lint@5fac056c45595896c973fbde871f01f6cb14d74c  # v26.4.0
+        with:
+          setup_python: "false"
+          args: "--fix=all --skip-list=yaml"
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1  # v8
+        with:
+          commit-message: "style: apply ansible-lint autofixes"
+          title: "🤖 ansible-lint autofixes"
+          body: |
+            Automatic fixes applied by `ansible-lint --fix=all --skip-list=yaml`.
+
+            YAML formatting is enforced by the gate but intentionally **not**
+            auto-fixed here (it would collapse aligned comments / rewrap lines).
+            `var-naming` isn't auto-fixable either — if the gate is still red after
+            this PR, fix those by hand.
+          branch: ansible-lint-fixes
+          base: main
+          delete-branch: true
+          labels: ansible

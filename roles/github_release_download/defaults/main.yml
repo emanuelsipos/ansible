@@ -1,0 +1,55 @@
+---
+# defaults/main.yml - Default variables for github_release_download role
+
+# ==============================================================================
+# REQUIRED VARIABLES (must be set by user)
+# ==============================================================================
+# github_release_download_repo: "user/repo"       # GitHub repository (e.g., "moparisthebest/static-curl")
+# github_release_download_asset: "curl-amd64"     # Asset filename to download from the release
+# github_release_download_dest: "/opt/app/binary" # Full path where the file should be saved
+
+# ==============================================================================
+# FILE PERMISSIONS
+# ==============================================================================
+github_release_download_mode: "0755"              # File permissions (0755 = rwxr-xr-x, executable)
+# github_release_download_owner: root # or 0      # File owner (optional)
+# github_release_download_group: root # or 0      # File group (optional)
+
+# ==============================================================================
+# VERSION PINNING (optional)
+# ==============================================================================
+# Pin to a specific release tag instead of always using the latest release.
+# Set to the exact tag name (e.g. "v8.10.0"). Leave unset to always track latest.
+# github_release_download_version: "v8.10.0"
+
+# ==============================================================================
+# GITHUB API AUTHENTICATION (optional)
+# ==============================================================================
+# Provide a GitHub token to avoid rate-limiting (60 req/hr unauthenticated → 5000/hr).
+# Useful when running against many hosts in parallel.
+# github_release_download_token: "{{ lookup('env', 'GITHUB_TOKEN') }}"
+
+# ==============================================================================
+# DEBUG
+# ==============================================================================
+github_release_download_debug: false              # Enable debug output
+
+# ==============================================================================
+# CRON AUTO-UPDATE (optional)
+# ==============================================================================
+github_release_download_cron_enabled: false       # Set to true to install a cron job for auto-updates
+
+# Cron schedule (default: daily at 3:30 AM)
+github_release_download_cron_minute: "30"
+github_release_download_cron_hour: "3"
+github_release_download_cron_day: "*"
+github_release_download_cron_weekday: "*"
+github_release_download_cron_month: "*"
+
+# Cron job settings
+github_release_download_cron_user: "root"                                # User to run the cron job as
+github_release_download_cron_script_dir: "/opt/github-release-updater"  # Where to store update scripts
+github_release_download_cron_log_file: "/var/log/github-release-updater.log"  # Log file for updates
+
+# Optional: command to run after successful update (e.g., restart a service)
+# github_release_download_cron_post_update_command: "systemctl restart myservice"

@@ -1,0 +1,11 @@
+---
+agent_hub_url: "https://beszel.{{ public_domain }}"
+agent_port: 45876
+agent_install_dir: /usr/local/bin
+agent_user: beszel
+agent_args: ""
+agent_service_enabled: true
+agent_service_state: started
+agent_name: ""
+agent_airgap: false
+agent_sensors: "-dell_smm_15"

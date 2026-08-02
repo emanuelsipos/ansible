@@ -1,0 +1,26 @@
+---
+- name: Manage Komodo Service
+  hosts: "{{ limit | default('komodo') }}"
+  tags: [komodo]
+  become: false
+
+  pre_tasks:
+    - name: Validate Semaphore Komodo variables
+      ansible.builtin.assert:
+        that:
+          - komodo_core_public_key is defined
+          - komodo_core_public_key | length > 0
+          - komodo_core_api_key is defined
+          - komodo_core_api_key | length > 0
+          - komodo_core_api_secret is defined
+          - komodo_core_api_secret | length > 0
+          - komodo_registry_providers[0].accounts[0].token is defined
+          - komodo_registry_providers[0].accounts[0].token | length > 0
+        quiet: true
+        fail_msg: Required Komodo variables are missing from Semaphore
+      no_log: true
+      tags: [komodo]
+
+  roles:
+    - role: bpbradley.komodo
+      tags: [komodo]

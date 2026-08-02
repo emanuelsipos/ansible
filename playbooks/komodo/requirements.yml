@@ -1,0 +1,5 @@
+---
+roles:
+  # No version tags published upstream; Renovate cannot auto-update this role.
+  # Check https://github.com/bpbradley/ansible-role-komodo manually for changes.
+  - name: bpbradley.komodo

@@ -1,0 +1,30 @@
+#jinja2:trim_blocks:True,lstrip_blocks:True
+{% for line in ansible_managed.splitlines() %}
+# {{ line }}
+{% endfor %}
+{% for name, dev in zram_devices.items() %}
+
+[{{ name }}]
+zram-size = {{ dev.get('zram_size') }}
+{% if dev.get('compression_algorithm') is not none %}
+compression-algorithm = {{ dev.get('compression_algorithm') }}
+{% endif %}
+{% if dev.get('swap_priority') is not none %}
+swap-priority = {{ dev.get('swap_priority') }}
+{% endif %}
+{% if dev.get('writeback_device') is not none %}
+writeback-device = {{ dev.get('writeback_device') }}
+{% endif %}
+{% if dev.get('host_memory_limit') is not none %}
+host-memory-limit = {{ dev.get('host_memory_limit') }}
+{% endif %}
+{% if dev.get('fs_type') is not none %}
+fs-type = {{ dev.get('fs_type') }}
+{% endif %}
+{% if dev.get('mount_point') is not none %}
+mount-point = {{ dev.get('mount_point') }}
+{% endif %}
+{% if dev.get('options') is not none %}
+options = {{ dev.get('options') }}
+{% endif %}
+{% endfor %}

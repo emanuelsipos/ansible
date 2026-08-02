@@ -1,0 +1,29 @@
+---
+# Package that provides the zram-generator and writes /etc/systemd/zram-generator.conf
+zram_package: systemd-zram-generator
+
+# Path to the generator config file
+zram_config_file: /etc/systemd/zram-generator.conf
+
+# zram devices to configure, keyed by device name (zram0, zram1, ...).
+# Each key becomes a [zramN] section in zram-generator.conf. Only zram_size is
+# required; the rest are emitted only when set (none = omit the line).
+#   zram_size              -> zram-size             (expression using `ram` = MemTotal in MiB)
+#   compression_algorithm  -> compression-algorithm (e.g. zstd, lz4)
+#   swap_priority          -> swap-priority         (omit for a filesystem device)
+#   writeback_device       -> writeback-device      (block dev for incompressible pages)
+#   host_memory_limit      -> host-memory-limit     (MiB; skip the device above this much RAM)
+#   fs_type / mount_point  -> fs-type / mount-point  (use a mounted fs instead of swap)
+#   options                -> options               (swapon/mount options)
+zram_devices:
+  zram0:
+    zram_size: "ram * 0.25"
+    compression_algorithm: zstd
+    swap_priority: 100
+
+# Manage vm.swappiness via a dedicated sysctl drop-in. zram swap is RAM-fast, but
+# on a big-RAM hypervisor you usually still don't want to page guest memory eagerly.
+# Set to false to manage swappiness through your own sysctl role instead.
+zram_manage_swappiness: true
+zram_swappiness: 10
+zram_sysctl_drop_in_file: /etc/sysctl.d/99-zram.conf

@@ -1,0 +1,10 @@
+---
+# Dict of sysctl key/value pairs to apply
+sysctl_settings: {}
+
+# Drop-in file path — override per role invocation
+sysctl_drop_in_file: "/etc/sysctl.d/99-custom.conf"
+
+# Optional list of kernel modules to load before applying settings
+# (e.g. ["tcp_bbr"] for BBR congestion control)
+sysctl_modules: []

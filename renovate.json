@@ -1,0 +1,34 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:best-practices"],
+  "osvVulnerabilityAlerts": true,
+  "dependencyDashboard": true,
+  "dependencyDashboardTitle": "Renovate Dashboard",
+  "assignees": ["emanuelsipos"],
+  "labels": ["renovate"],
+  "configMigration": true,
+  "prHourlyLimit": 0,
+  "prConcurrentLimit": 0,
+  "ignorePaths": [
+    ".archive/**"
+  ],
+  "ansible-galaxy": {
+    "managerFilePatterns": [
+      "/(^|/)requirements\\.yml$/"
+    ]
+  },
+  "packageRules": [
+    {
+      "matchManagers": ["github-actions"],
+      "automerge": true,
+      "automergeType": "pr",
+      "addLabels": ["github-actions"]
+    },
+    {
+      "matchManagers": ["ansible-galaxy"],
+      "automerge": true,
+      "automergeType": "pr",
+      "addLabels": ["ansible"]
+    }
+  ]
+}

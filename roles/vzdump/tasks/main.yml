@@ -1,0 +1,29 @@
+---
+- name: Ensure /etc/vzdump.conf exists
+  ansible.builtin.file:
+    path: /etc/vzdump.conf
+    state: touch
+    mode: "0640"
+    owner: root
+    group: root
+    modification_time: preserve
+    access_time: preserve
+  tags: [vzdump]
+
+- name: Configure standard vzdump settings
+  ansible.builtin.lineinfile:
+    path: /etc/vzdump.conf
+    # Matches either an active line or a commented out default line for the key
+    regexp: '^\s*#?\s*{{ item.key }}\s*:.*$'
+    line: "{{ item.key }}: {{ item.value }}"
+  loop: "{{ vzdump_config | dict2items }}"
+  when: item.value is defined and item.value | string | length > 0
+  tags: [vzdump]
+
+- name: Manage vzdump exclude-path entries
+  ansible.builtin.blockinfile:
+    path: /etc/vzdump.conf
+    marker: "# {mark} ANSIBLE MANAGED: vzdump exclude-paths"
+    block: "{{ vzdump_exclude_paths | map('regex_replace', '^', 'exclude-path: ') | join('\n') }}"
+    create: false
+  tags: [vzdump]

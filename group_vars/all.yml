@@ -1,0 +1,25 @@
+---
+ansible_user: ansible
+ansible_managed: "**** Warning ****\nThis file is managed by Ansible.\nPlease do not make any changes here."
+public_domain: >-
+  {{
+    lookup(
+      'ansible.builtin.env',
+      'PUBLIC_DOMAIN',
+      default=undef()
+    )
+  }}
+
+# hifis.unattended_upgrades configuration
+unattended_upgrades_origins_patterns:
+  - "origin=Debian,codename=${distro_codename},label=Debian"
+  - "origin=Debian,codename=${distro_codename},label=Debian-Security"
+  - "origin=Debian,codename=${distro_codename}-security,label=Debian-Security"
+  - "origin=Debian,codename=${distro_codename}-updates"
+  - "origin=Docker,label=Docker CE"
+  - "origin=Tailscale,label=Tailscale"
+unattended_upgrades_automatic_reboot: true
+unattended_upgrades_automatic_reboot_time: "04:00"
+unattended_upgrades_remove_unused_dependencies: true
+unattended_upgrades_remove_unused_kernel_packages: true
+unattended_upgrades_autofix_interrupted_dpkg: true

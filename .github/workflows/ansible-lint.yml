@@ -1,0 +1,49 @@
+---
+name: ansible-lint
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ansible-lint-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Ansible Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: "3.x"
+      - name: Install Ansible
+        run: pip install ansible-core
+      - name: Install all requirements
+        run: |
+          for f in playbooks/*/requirements.yml; do
+            ansible-galaxy install -r "$f"
+          done
+      - name: Run ansible-lint
+        uses: ansible/ansible-lint@5fac056c45595896c973fbde871f01f6cb14d74c  # v26.4.0
+        with:
+          setup_python: "false"
+      - name: Ping healthchecks
+        if: success() || failure()  # not on cancellation
+        env:
+          HC_URL: ${{ secrets.HC_ANSIBLE_LINT }}
+        run: |
+          [ -z "$HC_URL" ] && exit 0
+          if [ "${{ job.status }}" = "success" ]; then
+            curl -fsS --retry 3 "$HC_URL" > /dev/null || true
+          else
+            curl -fsS --retry 3 "${HC_URL}/fail" > /dev/null || true
+          fi

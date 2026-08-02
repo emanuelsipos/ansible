@@ -1,0 +1,20 @@
+---
+extends: default
+rules:
+  # ansible-lint compatibility: it embeds yamllint and requires these settings
+  braces:
+    max-spaces-inside: 1
+  comments-indentation: false
+  line-length:
+    max: 120
+    level: warning
+  document-start:
+    present: true
+  truthy:
+    allowed-values: ['true', 'false', 'yes', 'no']
+    check-keys: false
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true
+  comments:
+    min-spaces-from-content: 1

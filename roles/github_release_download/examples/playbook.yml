@@ -1,0 +1,21 @@
+---
+# Example playbook demonstrating the github_release_download role
+
+- name: Download static curl from GitHub releases with auto-update
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Download static curl binary with cron auto-update
+      ansible.builtin.include_role:
+        name: github_release_download
+      vars:
+        github_release_download_repo: "moparisthebest/static-curl"
+        github_release_download_asset: "curl-amd64"
+        github_release_download_dest: "/opt/rustic/curl"
+        github_release_download_cron_enabled: true        # Enable auto-updates
+        github_release_download_debug: true
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg: "Downloaded: {{ github_release_download_changed }}, Version: {{ github_release_download_resolved_version }}"

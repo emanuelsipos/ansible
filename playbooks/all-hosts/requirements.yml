@@ -1,0 +1,14 @@
+---
+collections:
+  - name: ansible.posix
+    version: "2.2.0"
+  - name: community.general
+    version: "13.0.0"
+
+roles:
+  - name: brianhartsock.smartmontools
+    version: "v1.0.1"
+  - name: geerlingguy.docker
+    version: "8.0.0"
+  - name: hifis.unattended_upgrades
+    version: "v3.2.1"

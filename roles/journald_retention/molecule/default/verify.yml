@@ -1,0 +1,25 @@
+---
+- name: Verify
+  hosts: all
+  tasks:
+    - name: Check journald drop-in config exists
+      ansible.builtin.stat:
+        path: /etc/systemd/journald.conf.d/retention.conf
+      register: journald_retention_conf
+
+    - name: Assert config file was created
+      ansible.builtin.assert:
+        that:
+          - journald_retention_conf.stat.exists
+
+    - name: Read retention config
+      ansible.builtin.slurp:
+        src: /etc/systemd/journald.conf.d/retention.conf
+      register: journald_retention_content
+
+    - name: Assert retention settings are correct
+      ansible.builtin.assert:
+        that:
+          - "'MaxRetentionSec=14day' in (journald_retention_content['content'] | b64decode)"
+          - "'SystemMaxUse=500M' in (journald_retention_content['content'] | b64decode)"
+          - "'Storage=persistent' in (journald_retention_content['content'] | b64decode)"

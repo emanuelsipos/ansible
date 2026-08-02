@@ -1,0 +1,9 @@
+---
+- name: Converge
+  hosts: all
+  vars:
+    journald_retention_days: 14
+    journald_retention_system_max_use: "500M"
+    journald_retention_storage: "persistent"
+  roles:
+    - role: journald_retention

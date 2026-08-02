@@ -1,0 +1,38 @@
+---
+- name: Verify
+  hosts: all
+  tasks:
+    # zram-generator is a no-op inside containers, so we verify the rendered
+    # config and the swappiness drop-in rather than a live /dev/zram device.
+    - name: Check zram-generator config exists
+      ansible.builtin.stat:
+        path: /etc/systemd/zram-generator.conf
+      register: zram_conf
+
+    - name: Assert config file was created
+      ansible.builtin.assert:
+        that:
+          - zram_conf.stat.exists
+
+    - name: Read zram-generator config
+      ansible.builtin.slurp:
+        src: /etc/systemd/zram-generator.conf
+      register: zram_content
+
+    - name: Assert zram0 device settings are present
+      ansible.builtin.assert:
+        that:
+          - "'[zram0]' in (zram_content['content'] | b64decode)"
+          - "'zram-size = ram * 0.25' in (zram_content['content'] | b64decode)"
+          - "'compression-algorithm = zstd' in (zram_content['content'] | b64decode)"
+          - "'swap-priority = 100' in (zram_content['content'] | b64decode)"
+
+    - name: Check swappiness drop-in exists
+      ansible.builtin.stat:
+        path: /etc/sysctl.d/99-zram.conf
+      register: zram_swappiness_conf
+
+    - name: Assert swappiness drop-in was created
+      ansible.builtin.assert:
+        that:
+          - zram_swappiness_conf.stat.exists

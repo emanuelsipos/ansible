@@ -1,0 +1,8 @@
+---
+- name: Reload sysctl
+  ansible.builtin.command: sysctl --system
+  register: _sysctl_result
+  changed_when: false
+  failed_when:
+    - _sysctl_result.rc != 0
+    - _sysctl_result.stderr_lines | reject('search', 'permission denied') | reject('search', 'Invalid argument') | list | length > 0

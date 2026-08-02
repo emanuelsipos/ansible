@@ -1,0 +1,39 @@
+---
+- name: Install zram-generator
+  ansible.builtin.apt:
+    name: "{{ zram_package }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  tags: [zram]
+
+- name: Detect container environment (zram-generator is a no-op in containers)
+  ansible.builtin.command: systemd-detect-virt --container --quiet
+  register: _zram_container_check
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: [zram]
+
+- name: Configure zram devices
+  ansible.builtin.template:
+    src: zram-generator.conf.j2
+    dest: "{{ zram_config_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd daemon
+    - Restart zram swap devices
+  tags: [zram]
+
+- name: Set vm.swappiness for zram swap
+  ansible.posix.sysctl:
+    name: vm.swappiness
+    value: "{{ zram_swappiness | string }}"
+    sysctl_file: "{{ zram_sysctl_drop_in_file }}"
+    sysctl_set: true
+    state: present
+    reload: true
+  when: zram_manage_swappiness | bool
+  tags: [zram, swappiness]

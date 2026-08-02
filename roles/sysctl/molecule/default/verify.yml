@@ -1,0 +1,24 @@
+---
+- name: Verify
+  hosts: all
+  tasks:
+    - name: Check sysctl drop-in file exists
+      ansible.builtin.stat:
+        path: /etc/sysctl.d/99-custom.conf
+      register: sysctl_conf
+
+    - name: Assert file was created
+      ansible.builtin.assert:
+        that:
+          - sysctl_conf.stat.exists
+
+    - name: Read sysctl file
+      ansible.builtin.slurp:
+        src: /etc/sysctl.d/99-custom.conf
+      register: sysctl_content
+
+    - name: Assert sysctl settings are present
+      ansible.builtin.assert:
+        that:
+          - "'net.core.somaxconn = 1024' in (sysctl_content['content'] | b64decode)"
+          - "'vm.swappiness = 10' in (sysctl_content['content'] | b64decode)"
