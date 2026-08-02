@@ -26,6 +26,10 @@
       "automerge": true,
       "automergeType": "pr",
       "addLabels": ["ansible"]
+    },
+    {
+      "matchManagers": ["pip_requirements"],
+      "addLabels": ["python"]
     }
   ]
 }
