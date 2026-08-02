@@ -13,19 +13,24 @@ Production inventory and credentials are managed in Semaphore and are not stored
 
 Reusable roles live under [`roles/`](roles/), including journald retention, sysctl configuration, zram, vzdump exclusions, and GitHub release downloads.
 
-## Configuration
+## Semaphore configuration
 
-Semaphore supplies these environment variables:
+Attach one variable group to the templates that run these playbooks.
 
-```text
-PUBLIC_DOMAIN
-KOMODO_CORE_API_KEY
-KOMODO_CORE_API_SECRET
-KOMODO_REGISTRY_USERNAME
-KOMODO_REGISTRY_TOKEN
-```
+| Input | Variable group section | Used by |
+| --- | --- | --- |
+| `PUBLIC_DOMAIN` | Variables → Environment variables | `beszel`, `komodo` |
+| `KOMODO_REGISTRY_USERNAME` | Variables → Environment variables | `komodo` |
+| `KOMODO_CORE_API_KEY` | Secrets → Environment variables | `komodo` |
+| `KOMODO_CORE_API_SECRET` | Secrets → Environment variables | `komodo` |
+| `KOMODO_REGISTRY_TOKEN` | Secrets → Environment variables | `komodo` |
+| `TAILSCALE_AUTHKEY` | Secrets → Environment variables | `tailscale` |
+| `agent_public_key` | Variables → Extra variables | `beszel` |
+| `komodo_core_public_key` | Variables → Extra variables | `komodo` |
 
-It also supplies `komodo_core_public_key` and `agent_public_key` as Ansible extra variables.
+Production inventory is stored in Semaphore. The inventory must provide the
+groups shown in [`hosts.example`](hosts.example); templates may limit runs to a
+smaller host or group.
 
 For local use, copy `hosts.example` to `hosts`, replace the example hosts, install the requirements for the playbook being run, and provide the same variables through your preferred secret store.
 
