@@ -36,10 +36,12 @@
             "assets": [
               {
                 "name": "asset.bin",
+                "url": "http://127.0.0.1:8000/downloads/asset.bin",
                 "browser_download_url": "http://127.0.0.1:8000/downloads/asset.bin"
               },
               {
                 "name": "checksums.txt",
+                "url": "http://127.0.0.1:8000/downloads/checksums.txt",
                 "browser_download_url": "http://127.0.0.1:8000/downloads/checksums.txt"
               }
             ]

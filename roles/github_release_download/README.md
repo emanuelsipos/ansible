@@ -45,7 +45,7 @@ For executable assets, pin a version and configure one of these verification opt
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `github_release_download_token` | (unset) | Optional GitHub API token. Raises rate limit from 60 to 5000 req/hr — recommended when running against many hosts in parallel. |
+| `github_release_download_token` | (unset) | Optional GitHub token for API and release-asset requests. Required for private repositories and recommended when running against many hosts in parallel. |
 | `github_release_download_api_url` | `https://api.github.com/repos` | GitHub-compatible releases API base URL |
 | `github_release_download_token_file` | `/etc/github-release-updater/github.token` | Root-only token file read by the cron updater |
 

@@ -37,9 +37,13 @@ API_URL="{{ github_release_download_api_url }}/${REPO}/releases/latest"
 # Get release info from GitHub API. Tokens are read from a root-only file and
 # are never rendered into this script.
 CURL_HEADERS=(-H "Accept: application/vnd.github+json")
+ASSET_HEADERS=()
+AUTHENTICATED=false
 if [[ -r "$TOKEN_FILE" ]]; then
     GITHUB_TOKEN=$(<"$TOKEN_FILE")
     CURL_HEADERS+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+    ASSET_HEADERS=(-H "Accept: application/octet-stream" -H "Authorization: Bearer ${GITHUB_TOKEN}")
+    AUTHENTICATED=true
 fi
 RELEASE_INFO=$(curl -fsSL "${CURL_HEADERS[@]}" "$API_URL" 2>/dev/null) || {
     log "ERROR: Failed to fetch release info from GitHub API"
@@ -48,9 +52,15 @@ RELEASE_INFO=$(curl -fsSL "${CURL_HEADERS[@]}" "$API_URL" 2>/dev/null) || {
 
 # Extract version tag and download URL using jq for robust JSON parsing
 LATEST_VERSION=$(echo "$RELEASE_INFO" | jq -r '.tag_name')
-DOWNLOAD_URL=$(echo "$RELEASE_INFO" | jq -r --arg asset "$ASSET" '.assets[] | select(.name == $asset) | .browser_download_url')
+DOWNLOAD_URL=$(echo "$RELEASE_INFO" | jq -r \
+    --arg asset "$ASSET" \
+    --argjson authenticated "$AUTHENTICATED" \
+    '.assets[] | select(.name == $asset) | if $authenticated then .url else .browser_download_url end')
 {% if github_release_download_checksum_asset is defined %}
-CHECKSUM_URL=$(echo "$RELEASE_INFO" | jq -r --arg asset "{{ github_release_download_checksum_asset }}" '.assets[] | select(.name == $asset) | .browser_download_url')
+CHECKSUM_URL=$(echo "$RELEASE_INFO" | jq -r \
+    --arg asset "{{ github_release_download_checksum_asset }}" \
+    --argjson authenticated "$AUTHENTICATED" \
+    '.assets[] | select(.name == $asset) | if $authenticated then .url else .browser_download_url end')
 {% endif %}
 
 if [[ -z "$LATEST_VERSION" ]] || [[ "$LATEST_VERSION" == "null" ]]; then
@@ -76,7 +86,7 @@ TEMP_FILE=$(mktemp)
 trap 'rm -f "$TEMP_FILE"' EXIT
 
 # Download the file
-if ! curl -fsSL -o "$TEMP_FILE" "$DOWNLOAD_URL"; then
+if ! curl -fsSL "${ASSET_HEADERS[@]}" -o "$TEMP_FILE" "$DOWNLOAD_URL"; then
     log "ERROR: Failed to download ${DOWNLOAD_URL}"
     exit 1
 fi
@@ -91,7 +101,7 @@ fi
 {% elif github_release_download_checksum_asset is defined %}
 CHECKSUM_FILE=$(mktemp)
 trap 'rm -f "$TEMP_FILE" "$CHECKSUM_FILE"' EXIT
-if ! curl -fsSL -o "$CHECKSUM_FILE" "$CHECKSUM_URL"; then
+if ! curl -fsSL "${ASSET_HEADERS[@]}" -o "$CHECKSUM_FILE" "$CHECKSUM_URL"; then
     log "ERROR: Failed to download checksum asset"
     exit 1
 fi

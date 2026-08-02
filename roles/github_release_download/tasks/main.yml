@@ -96,12 +96,12 @@
     github_release_download_url: >-
       {{ github_release_download_release.assets
          | selectattr('name', 'equalto', github_release_download_asset)
-         | map(attribute='browser_download_url')
+         | map(attribute=('url' if github_release_download_token is defined else 'browser_download_url'))
          | first | default('') }}
     github_release_download_checksum_url: >-
       {{ github_release_download_release.assets
          | selectattr('name', 'equalto', github_release_download_checksum_asset | default(''))
-         | map(attribute='browser_download_url')
+         | map(attribute=('url' if github_release_download_token is defined else 'browser_download_url'))
          | first | default('') }}
   tags: [github_release]
 
@@ -146,8 +146,19 @@
                if github_release_download_checksum_asset is defined
                else omit) }}
     force: true
+    headers: >-
+      {{
+        {'Accept': 'application/octet-stream'}
+        | combine(
+            {'Authorization': 'Bearer ' + github_release_download_token}
+            if github_release_download_token is defined else {}
+          )
+      }}
+    unredirected_headers:
+      - Authorization
   when: github_release_download_needs_update
   register: github_release_download_fetch_result
+  no_log: "{{ github_release_download_token is defined }}"
   tags: [github_release]
 
 - name: Write version file
