@@ -3,7 +3,7 @@
   hosts: "{{ limit | default('all') }}"
   tags: [beszel]
   vars_files:
-    - ../vars/beszel.yml
+    - ../../vars/beszel.yml
 
   pre_tasks:
     - name: Validate Beszel configuration
