@@ -1,0 +1,10 @@
+---
+repos:
+  - repo: local
+    hooks:
+      - id: ansible-lint-fix
+        name: ansible-lint autofix
+        entry: ansible-lint --fix=all --skip-list=yaml
+        language: system
+        pass_filenames: false
+        files: \.(yaml|yml)$

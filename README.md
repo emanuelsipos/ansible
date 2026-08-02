@@ -39,6 +39,10 @@ ansible-galaxy install -r playbooks/all-hosts/requirements.yml
 ansible-playbook -i hosts playbooks/all-hosts/playbook.yml
 ```
 
+Install the pinned tools from `requirements-dev.txt`, then run
+`pre-commit install` to apply available ansible-lint fixes before commits. CI
+also opens an autofix PR when a push to `main` introduces fixable lint issues.
+
 ## License
 
 [MIT](LICENSE)

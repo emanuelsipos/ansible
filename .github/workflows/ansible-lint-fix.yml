@@ -2,8 +2,8 @@
 name: ansible-lint autofix
 
 on:
-  schedule:
-    - cron: "0 0 * * *"  # daily at midnight UTC
+  push:
+    branches: ["main"]
   workflow_dispatch:
 
 permissions:
