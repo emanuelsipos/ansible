@@ -29,3 +29,4 @@
           - github_release_download_updater_files.results[1].stat.mode == '0600'
           - github_release_download_updater_files.results[2].stat.mode == '0700'
           - "'molecule-test-token' not in (github_release_download_updater_script.content | b64decode)"
+          - "'EXISTING_UID' in (github_release_download_updater_script.content | b64decode)"

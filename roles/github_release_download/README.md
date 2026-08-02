@@ -57,6 +57,9 @@ For executable assets, pin a version and configure one of these verification opt
 | `github_release_download_owner` | (unset) | File owner |
 | `github_release_download_group` | (unset) | File group |
 
+When owner or group is omitted, the cron updater preserves that attribute from
+an existing destination file.
+
 ### Cron Auto-Update
 
 | Variable | Default | Description |

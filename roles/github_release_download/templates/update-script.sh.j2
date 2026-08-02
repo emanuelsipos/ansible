@@ -18,6 +18,13 @@ FILE_GROUP="{{ github_release_download_group }}"
 LOG_FILE="{{ github_release_download_cron_log_file }}"
 TOKEN_FILE="{{ github_release_download_token_file }}"
 
+EXISTING_UID=""
+EXISTING_GID=""
+if [[ -e "$DEST" ]]; then
+    EXISTING_UID=$(stat -c '%u' "$DEST")
+    EXISTING_GID=$(stat -c '%g' "$DEST")
+fi
+
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
 }
@@ -125,9 +132,17 @@ chmod "$FILE_MODE" "$DEST"
 
 {% if github_release_download_owner is defined %}
 chown "$FILE_OWNER" "$DEST"
+{% else %}
+if [[ -n "$EXISTING_UID" ]]; then
+    chown "$EXISTING_UID" "$DEST"
+fi
 {% endif %}
 {% if github_release_download_group is defined %}
 chgrp "$FILE_GROUP" "$DEST"
+{% else %}
+if [[ -n "$EXISTING_GID" ]]; then
+    chgrp "$EXISTING_GID" "$DEST"
+fi
 {% endif %}
 
 # Write version file
