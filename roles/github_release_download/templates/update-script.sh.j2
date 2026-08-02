@@ -63,6 +63,9 @@ DOWNLOAD_URL=$(echo "$RELEASE_INFO" | jq -r \
     --arg asset "$ASSET" \
     --argjson authenticated "$AUTHENTICATED" \
     '.assets[] | select(.name == $asset) | if $authenticated then .url else .browser_download_url end')
+DOWNLOAD_DIGEST=$(echo "$RELEASE_INFO" | jq -r \
+    --arg asset "$ASSET" \
+    '.assets[] | select(.name == $asset) | .digest // ""')
 {% if github_release_download_checksum_asset is defined %}
 CHECKSUM_URL=$(echo "$RELEASE_INFO" | jq -r \
     --arg asset "{{ github_release_download_checksum_asset }}" \
@@ -117,6 +120,14 @@ ACTUAL_CHECKSUM=$(sha256sum "$TEMP_FILE" | awk '{print $1}')
 if [[ ! "$EXPECTED_CHECKSUM" =~ ^[a-fA-F0-9]{64}$ ]] || \
    [[ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]]; then
     log "ERROR: SHA-256 verification failed for ${ASSET}"
+    exit 1
+fi
+{% elif not github_release_download_allow_unverified %}
+EXPECTED_CHECKSUM="${DOWNLOAD_DIGEST#sha256:}"
+ACTUAL_CHECKSUM=$(sha256sum "$TEMP_FILE" | awk '{print $1}')
+if [[ ! "$DOWNLOAD_DIGEST" =~ ^sha256:[a-fA-F0-9]{64}$ ]] || \
+   [[ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]]; then
+    log "ERROR: GitHub asset digest verification failed for ${ASSET}"
     exit 1
 fi
 {% endif %}

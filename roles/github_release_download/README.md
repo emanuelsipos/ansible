@@ -34,12 +34,14 @@ An Ansible role that downloads files from GitHub releases with version tracking.
 |----------|---------|-------------|
 | `github_release_download_version` | (unset) | Pin to a specific release tag (e.g. `v8.10.0`). Omit to always track the latest release. |
 
-For executable assets, pin a version and configure one of these verification options:
+Release assets are verified with the SHA-256 digest returned by GitHub's API.
+For APIs that do not provide asset digests, configure one of these options:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `github_release_download_checksum` | (unset) | Fixed checksum in `sha256:<digest>` form |
 | `github_release_download_checksum_asset` | (unset) | Release asset containing standard `sha256sum` entries |
+| `github_release_download_allow_unverified` | `false` | Explicitly allow a download when no SHA-256 source is available |
 
 A fixed checksum must be paired with `github_release_download_version`; it
 cannot verify a future release. Use a checksum asset when intentionally

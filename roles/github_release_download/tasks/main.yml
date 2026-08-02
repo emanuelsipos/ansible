@@ -14,6 +14,7 @@
         github_release_download_checksum is not defined or
         github_release_download_checksum is match('^sha256:[a-fA-F0-9]{64}$')
       - github_release_download_checksum is not defined or github_release_download_checksum_asset is not defined
+      - github_release_download_allow_unverified is boolean
       - >-
         github_release_download_checksum_asset is not defined or
         github_release_download_checksum_asset | length > 0
@@ -103,6 +104,11 @@
          | selectattr('name', 'equalto', github_release_download_checksum_asset | default(''))
          | map(attribute=('url' if github_release_download_token is defined else 'browser_download_url'))
          | first | default('') }}
+    github_release_download_asset_digest: >-
+      {{ github_release_download_release.assets
+         | selectattr('name', 'equalto', github_release_download_asset)
+         | map(attribute='digest')
+         | first | default('') }}
   tags: [github_release]
 
 - name: Validate release assets
@@ -111,8 +117,13 @@
       - github_release_download_latest_version | length > 0
       - github_release_download_url | length > 0
       - github_release_download_checksum_asset is not defined or github_release_download_checksum_url | length > 0
+      - >-
+        github_release_download_allow_unverified or
+        github_release_download_checksum is defined or
+        github_release_download_checksum_asset is defined or
+        github_release_download_asset_digest is match('^sha256:[a-fA-F0-9]{64}$')
     quiet: true
-    fail_msg: Requested asset or checksum asset was not found in the GitHub release
+    fail_msg: Requested release asset is missing or has no allowed SHA-256 verification source
   tags: [github_release]
 
 - name: Determine if download is needed
@@ -144,7 +155,9 @@
          if github_release_download_checksum is defined
          else ('sha256:' + github_release_download_checksum_url
                if github_release_download_checksum_asset is defined
-               else omit) }}
+               else (github_release_download_asset_digest
+                     if not github_release_download_allow_unverified
+                     else omit)) }}
     force: true
     headers: >-
       {{

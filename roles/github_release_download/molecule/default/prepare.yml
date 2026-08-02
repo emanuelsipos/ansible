@@ -37,7 +37,8 @@
               {
                 "name": "asset.bin",
                 "url": "http://127.0.0.1:8000/downloads/asset.bin",
-                "browser_download_url": "http://127.0.0.1:8000/downloads/asset.bin"
+                "browser_download_url": "http://127.0.0.1:8000/downloads/asset.bin",
+                "digest": "sha256:8c76b21b0bac56b7cbdf8558106b98602ccee25504ae1604984f2078e84b009f"
               },
               {
                 "name": "checksums.txt",

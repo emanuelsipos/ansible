@@ -47,7 +47,6 @@
         github_release_download_asset: asset.bin
         github_release_download_dest: /opt/test-release/asset.bin
         github_release_download_api_url: http://127.0.0.1:8000
-        github_release_download_checksum: sha256:8c76b21b0bac56b7cbdf8558106b98602ccee25504ae1604984f2078e84b009f
         github_release_download_token: molecule-test-token
         github_release_download_token_file: /etc/test-release/github.token
         github_release_download_cron_enabled: true

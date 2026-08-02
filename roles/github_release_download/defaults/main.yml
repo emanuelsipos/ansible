@@ -27,6 +27,8 @@ github_release_download_mode: "0755"              # File permissions (0755 = rwx
 # sha256sum format: "<digest>  <filename>".
 # github_release_download_checksum: "sha256:<64-character digest>"
 # github_release_download_checksum_asset: "checksums.txt"
+# GitHub API asset digests are used automatically when neither option is set.
+github_release_download_allow_unverified: false
 
 # ==============================================================================
 # GITHUB API AUTHENTICATION (optional)
