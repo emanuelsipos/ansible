@@ -9,9 +9,6 @@
   "configMigration": true,
   "prHourlyLimit": 0,
   "prConcurrentLimit": 0,
-  "ignorePaths": [
-    ".archive/**"
-  ],
   "ansible-galaxy": {
     "managerFilePatterns": [
       "/(^|/)requirements\\.yml$/"
