@@ -32,6 +32,11 @@ jobs:
           for f in playbooks/*/requirements.yml; do
             ansible-galaxy install -r "$f"
           done
+      - name: Check playbook syntax
+        run: |
+          for playbook in playbooks/*/playbook.yml; do
+            ansible-playbook --syntax-check "$playbook"
+          done
       - name: Run ansible-lint
         uses: ansible/ansible-lint@262624cd0ab22a4221293216856c59671ce7aa5e  # v26.6.0
         with:
