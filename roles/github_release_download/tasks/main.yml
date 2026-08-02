@@ -81,16 +81,25 @@
   no_log: "{{ github_release_download_token is defined }}"
   tags: [github_release]
 
+- name: Parse GitHub release response
+  ansible.builtin.set_fact:
+    github_release_download_release: >-
+      {{
+        github_release_download_release_info.json
+        | default(github_release_download_release_info.content | from_json)
+      }}
+  tags: [github_release]
+
 - name: Set latest version and download URL facts
   ansible.builtin.set_fact:
-    github_release_download_latest_version: "{{ github_release_download_release_info.json.tag_name }}"
+    github_release_download_latest_version: "{{ github_release_download_release.tag_name }}"
     github_release_download_url: >-
-      {{ github_release_download_release_info.json.assets
+      {{ github_release_download_release.assets
          | selectattr('name', 'equalto', github_release_download_asset)
          | map(attribute='browser_download_url')
          | first | default('') }}
     github_release_download_checksum_url: >-
-      {{ github_release_download_release_info.json.assets
+      {{ github_release_download_release.assets
          | selectattr('name', 'equalto', github_release_download_checksum_asset | default(''))
          | map(attribute='browser_download_url')
          | first | default('') }}
