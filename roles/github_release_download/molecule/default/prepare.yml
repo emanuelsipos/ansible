@@ -2,6 +2,11 @@
 - name: Prepare release API fixture
   hosts: all
   tasks:
+    - name: Refresh package metadata
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
     - name: Create fixture directories
       ansible.builtin.file:
         path: "/tmp/github-release-fixture/{{ item }}"
