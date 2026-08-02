@@ -16,7 +16,7 @@ An Ansible role that downloads files from GitHub releases with version tracking.
 
 - Ansible 2.9+
 - Network access to GitHub API and releases
-- `curl`, `jq`, and `sha256sum` on the target when cron auto-update is enabled (`curl` and `jq` are installed by the role)
+- `sha256sum` on the target when cron auto-update is enabled (`curl`, `jq`, and the cron service are installed by the role)
 
 ## Role Variables
 

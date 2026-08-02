@@ -51,7 +51,6 @@
         github_release_download_token: molecule-test-token
         github_release_download_token_file: /etc/test-release/github.token
         github_release_download_cron_enabled: true
-        github_release_download_cron_packages: []
         github_release_download_cron_script_dir: /opt/test-release/updater
         github_release_download_cron_log_file: /tmp/test-release-updater.log
 
