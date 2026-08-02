@@ -1,0 +1,10 @@
+---
+- name: Converge
+  hosts: all
+  vars:
+    vzdump_extra_exclude_paths:
+      - /srv/cache
+    vzdump_extra_config:
+      maxfiles: 3
+  roles:
+    - role: vzdump

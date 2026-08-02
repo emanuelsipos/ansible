@@ -1,0 +1,16 @@
+---
+- name: Verify
+  hosts: all
+  tasks:
+    - name: Read vzdump configuration
+      ansible.builtin.slurp:
+        src: /etc/vzdump.conf
+      register: vzdump_configuration
+
+    - name: Verify managed settings
+      ansible.builtin.assert:
+        that:
+          - "'bwlimit: 102400' in (vzdump_configuration.content | b64decode)"
+          - "'maxfiles: 3' in (vzdump_configuration.content | b64decode)"
+          - "'exclude-path: /var/lib/docker/overlay2' in (vzdump_configuration.content | b64decode)"
+          - "'exclude-path: /srv/cache' in (vzdump_configuration.content | b64decode)"
