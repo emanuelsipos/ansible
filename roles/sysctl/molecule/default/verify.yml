@@ -20,5 +20,5 @@
     - name: Assert sysctl settings are present
       ansible.builtin.assert:
         that:
-          - "'net.core.somaxconn = 1024' in (sysctl_content['content'] | b64decode)"
-          - "'vm.swappiness = 10' in (sysctl_content['content'] | b64decode)"
+          - "'net.core.somaxconn=1024' in (sysctl_content['content'] | b64decode)"
+          - "'vm.swappiness=10' in (sysctl_content['content'] | b64decode)"
