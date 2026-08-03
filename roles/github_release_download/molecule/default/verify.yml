@@ -31,6 +31,21 @@
           - "'molecule-test-token' not in (github_release_download_updater_script.content | b64decode)"
           - "'EXISTING_UID' in (github_release_download_updater_script.content | b64decode)"
 
+    - name: Inspect controller post-update marker
+      ansible.builtin.stat:
+        path: /tmp/release-post-update
+      register: github_release_download_controller_post_update_marker
+
+    - name: Verify controller post-update command
+      ansible.builtin.assert:
+        that:
+          - github_release_download_controller_post_update_marker.stat.exists
+
+    - name: Remove controller post-update marker
+      ansible.builtin.file:
+        path: /tmp/release-post-update
+        state: absent
+
     - name: Corrupt the installed release asset
       ansible.builtin.copy:
         content: "corrupted\n"

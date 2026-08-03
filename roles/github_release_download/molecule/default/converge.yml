@@ -51,7 +51,58 @@
         github_release_download_cron_enabled: true
         github_release_download_cron_script_dir: /opt/test-release/updater
         github_release_download_cron_log_file: /tmp/test-release-updater.log
-        github_release_download_cron_post_update_command: touch /tmp/release-post-update
+        github_release_download_post_update_command: touch /tmp/release-post-update
+
+    - name: Record failed post-update activation for retry
+      block:
+        - name: Download asset with a failing post-update command
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/project
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /opt/test-release/retry.bin
+            github_release_download_api_url: http://127.0.0.1:8000
+            github_release_download_post_update_command: /bin/false
+
+        - name: Fail if post-update failure was accepted
+          ansible.builtin.fail:
+            msg: Failing post-update command was accepted
+      rescue:
+        - name: Record post-update failure
+          ansible.builtin.set_fact:
+            github_release_download_post_update_failure_recorded: true
+
+    - name: Inspect failed activation version marker
+      ansible.builtin.stat:
+        path: /opt/test-release/retry.bin.ver
+      register: github_release_download_failed_version_marker
+
+    - name: Retry release activation
+      ansible.builtin.include_role:
+        name: github_release_download
+      vars:
+        github_release_download_repo: test/project
+        github_release_download_asset: asset.bin
+        github_release_download_dest: /opt/test-release/retry.bin
+        github_release_download_api_url: http://127.0.0.1:8000
+        github_release_download_post_update_command: touch /tmp/retry-post-update
+
+    - name: Inspect successful activation markers
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /opt/test-release/retry.bin.ver
+        - /tmp/retry-post-update
+      register: github_release_download_retry_markers
+
+    - name: Verify failed activation was retried
+      ansible.builtin.assert:
+        that:
+          - github_release_download_post_update_failure_recorded | default(false)
+          - not github_release_download_failed_version_marker.stat.exists
+          - github_release_download_retry_markers.results[0].stat.exists
+          - github_release_download_retry_markers.results[1].stat.exists
 
     - name: Reject an incorrect checksum
       block:

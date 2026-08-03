@@ -222,6 +222,15 @@
   no_log: "{{ github_release_download_token is defined }}"
   tags: [github_release]
 
+- name: Run post-update command
+  ansible.builtin.command:
+    cmd: "{{ github_release_download_post_update_command }}"
+  when:
+    - github_release_download_needs_update
+    - github_release_download_post_update_command is defined
+  changed_when: true
+  tags: [github_release]
+
 - name: Write version file
   ansible.builtin.copy:
     content: "{{ github_release_download_latest_version }}"

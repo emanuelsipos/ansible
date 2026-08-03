@@ -80,7 +80,7 @@ an existing destination file.
 | `github_release_download_cron_user` | `root` | Must be `root`; updater files are root-only |
 | `github_release_download_cron_script_dir` | `/opt/github-release-updater` | Where to store update scripts |
 | `github_release_download_cron_log_file` | `/var/log/github-release-updater.log` | Log file path |
-| `github_release_download_cron_post_update_command` | (unset) | Command to run after update (e.g., restart service) |
+| `github_release_download_post_update_command` | (unset) | Command to run after update (e.g., restart service) |
 
 The post-update command is rendered directly into a root-owned script and must
 only contain trusted administrator-supplied configuration. The updater records
@@ -149,7 +149,7 @@ retried on the next run.
         github_release_download_asset: "curl-amd64"
         github_release_download_dest: "/opt/rustic/curl"
         github_release_download_cron_enabled: true
-        github_release_download_cron_post_update_command: "systemctl restart my-app"
+        github_release_download_post_update_command: "systemctl restart my-app"
 ```
 
 ### With file ownership
