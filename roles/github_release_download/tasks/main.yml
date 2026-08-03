@@ -285,6 +285,12 @@
         state: absent
       when: github_release_download_token is not defined
 
+    - name: Remove obsolete shared updater token file
+      ansible.builtin.file:
+        path: /etc/github-release-updater/github.token
+        state: absent
+      when: github_release_download_token_file != '/etc/github-release-updater/github.token'
+
     - name: Deploy auto-update script
       ansible.builtin.template:
         src: update-script.sh.j2

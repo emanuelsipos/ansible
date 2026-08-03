@@ -11,8 +11,8 @@
       ansible.builtin.stat:
         path: "{{ item }}"
       loop:
-        - /etc/test-release
-        - /etc/test-release/github.token
+        - /etc/github-release-updater
+        - /etc/github-release-updater/test-project.token
         - /opt/test-release/updater/github-release-update-test-project-asset-bin.sh
       register: github_release_download_updater_files
 
