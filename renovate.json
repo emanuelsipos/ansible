@@ -51,7 +51,6 @@
       "matchDepNames": [
         "python"
       ],
-      "allowedVersions": "/^3\\.14\\./",
       "groupName": "Python runtime",
       "groupSlug": "python-runtime",
       "automerge": true,
@@ -143,10 +142,9 @@
         "name: bpbradley\\.komodo\\n\\s+src: https://github\\.com/bpbradley/ansible-role-komodo\\.git\\n\\s+scm: git\\n(?:\\s+#.*\\n)?\\s+version: \"(?<currentDigest>[a-f0-9]{40})\""
       ],
       "depNameTemplate": "bpbradley.komodo",
-      "packageNameTemplate": "bpbradley/ansible-role-komodo",
+      "packageNameTemplate": "https://github.com/bpbradley/ansible-role-komodo.git",
       "currentValueTemplate": "main",
-      "datasourceTemplate": "github-digest",
-      "versioningTemplate": "exact"
+      "datasourceTemplate": "git-refs"
     },
     {
       "customType": "regex",
