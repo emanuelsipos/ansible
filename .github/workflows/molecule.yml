@@ -40,7 +40,9 @@ jobs:
       - name: Install development tooling
         run: pip install --requirement requirements-dev.txt
       - name: Install Ansible requirements
-        run: ansible-galaxy install --requirements-file molecule-requirements.yml
+        run: >-
+          ansible-galaxy collection install
+          --requirements-file playbooks/all-hosts/requirements.yml
       - name: Run Molecule
         working-directory: roles/${{ matrix.role }}
         env:
