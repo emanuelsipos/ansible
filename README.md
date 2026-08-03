@@ -39,9 +39,19 @@ ansible-galaxy install -r playbooks/all-hosts/requirements.yml
 ansible-playbook -i hosts playbooks/all-hosts/playbook.yml
 ```
 
-Install the pinned tools from `requirements-dev.txt`, then run
+Install the hash-locked tools from `requirements-dev.txt`, then run
 `pre-commit install` to apply available ansible-lint fixes before commits. CI
 also opens an autofix PR when a push to `main` introduces fixable lint issues.
+
+To update the development lock on Python 3.14 Linux x86_64:
+
+```bash
+python -m pip lock -r requirements-dev.in -o /tmp/pylock.ansible-dev.toml
+python .github/scripts/lock_requirements.py \
+  --input requirements-dev.in \
+  --lock /tmp/pylock.ansible-dev.toml \
+  --output requirements-dev.txt
+```
 
 ## License
 

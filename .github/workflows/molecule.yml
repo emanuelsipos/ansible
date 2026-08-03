@@ -38,7 +38,13 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - name: Install development tooling
-        run: pip install --requirement requirements-dev.txt
+        run: pip install --require-hashes --requirement requirements-dev.txt
+      - name: Validate development dependency lock
+        run: >-
+          python3 .github/scripts/lock_requirements.py
+          --input requirements-dev.in
+          --output requirements-dev.txt
+          --check
       - name: Install Ansible requirements
         run: >-
           ansible-galaxy collection install
