@@ -108,15 +108,6 @@
       "addLabels": [
         "pins"
       ]
-    },
-    {
-      "matchManagers": [
-        "custom.regex"
-      ],
-      "matchDepNames": [
-        "bpbradley.komodo"
-      ],
-      "automerge": false
     }
   ],
   "customDatasources": {
