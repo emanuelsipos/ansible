@@ -40,6 +40,7 @@
 - name: Check if file exists
   ansible.builtin.stat:
     path: "{{ github_release_download_dest }}"
+    checksum_algorithm: sha256
   register: github_release_download_file_stat
   tags: [github_release]
 
@@ -117,20 +118,71 @@
       - github_release_download_latest_version | length > 0
       - github_release_download_url | length > 0
       - github_release_download_checksum_asset is not defined or github_release_download_checksum_url | length > 0
+    quiet: true
+    fail_msg: Requested release asset or checksum asset is missing
+  tags: [github_release]
+
+- name: Fetch release checksum manifest
+  ansible.builtin.uri:
+    url: "{{ github_release_download_checksum_url }}"
+    method: GET
+    return_content: true
+    headers: >-
+      {{
+        {'Accept': 'application/octet-stream'}
+        | combine(
+            {'Authorization': 'Bearer ' + github_release_download_token}
+            if github_release_download_token is defined else {}
+          )
+      }}
+    unredirected_headers:
+      - Authorization
+  register: github_release_download_checksum_manifest
+  when: github_release_download_checksum_asset is defined
+  no_log: "{{ github_release_download_token is defined }}"
+  tags: [github_release]
+
+- name: Resolve expected release checksum
+  ansible.builtin.set_fact:
+    github_release_download_expected_checksum: >-
+      {{
+        (github_release_download_checksum | regex_replace('^sha256:', ''))
+        if github_release_download_checksum is defined
+        else (
+          github_release_download_checksum_manifest.content
+          | regex_findall(
+              '(?m)^([a-fA-F0-9]{64})\\s+\\*?'
+              ~ (github_release_download_asset | regex_escape)
+              ~ '$'
+            )
+          | first
+          | default('')
+          if github_release_download_checksum_asset is defined
+          else (github_release_download_asset_digest | regex_replace('^sha256:', ''))
+        )
+      }}
+  tags: [github_release]
+
+- name: Validate release checksum
+  ansible.builtin.assert:
+    that:
       - >-
         github_release_download_allow_unverified or
-        github_release_download_checksum is defined or
-        github_release_download_checksum_asset is defined or
-        github_release_download_asset_digest is match('^sha256:[a-fA-F0-9]{64}$')
+        github_release_download_expected_checksum is match('^[a-fA-F0-9]{64}$')
     quiet: true
-    fail_msg: Requested release asset is missing or has no allowed SHA-256 verification source
+    fail_msg: Release asset has no allowed SHA-256 verification source
   tags: [github_release]
 
 - name: Determine if download is needed
   ansible.builtin.set_fact:
     github_release_download_needs_update: >-
       {{ not github_release_download_file_stat.stat.exists
-         or github_release_download_current_version != github_release_download_latest_version }}
+         or github_release_download_current_version != github_release_download_latest_version
+         or (
+           github_release_download_expected_checksum | length > 0
+           and (github_release_download_file_stat.stat.checksum | default(''))
+               != github_release_download_expected_checksum
+         ) }}
   tags: [github_release]
 
 - name: Display version information
@@ -151,13 +203,9 @@
     owner: "{{ github_release_download_owner | default(omit) }}"
     group: "{{ github_release_download_group | default(omit) }}"
     checksum: >-
-      {{ github_release_download_checksum
-         if github_release_download_checksum is defined
-         else ('sha256:' + github_release_download_checksum_url
-               if github_release_download_checksum_asset is defined
-               else (github_release_download_asset_digest
-                     if not github_release_download_allow_unverified
-                     else omit)) }}
+      {{ ('sha256:' + github_release_download_expected_checksum)
+         if github_release_download_expected_checksum | length > 0
+         else omit }}
     force: true
     headers: >-
       {{

@@ -30,3 +30,24 @@
           - github_release_download_updater_files.results[2].stat.mode == '0700'
           - "'molecule-test-token' not in (github_release_download_updater_script.content | b64decode)"
           - "'EXISTING_UID' in (github_release_download_updater_script.content | b64decode)"
+
+    - name: Corrupt the installed release asset
+      ansible.builtin.copy:
+        content: "corrupted\n"
+        dest: /opt/test-release/asset.bin
+        mode: "0755"
+
+    - name: Run updater against the current release
+      ansible.builtin.command:
+        cmd: /opt/test-release/updater/github-release-update-test-project-asset-bin.sh
+      changed_when: true
+
+    - name: Read repaired release asset
+      ansible.builtin.slurp:
+        src: /opt/test-release/asset.bin
+      register: github_release_download_repaired_asset
+
+    - name: Verify corrupted release asset was repaired
+      ansible.builtin.assert:
+        that:
+          - (github_release_download_repaired_asset.content | b64decode) == 'verified release asset\n'

@@ -83,17 +83,48 @@ if [[ -z "$DOWNLOAD_URL" ]] || [[ "$DOWNLOAD_URL" == "null" ]]; then
     exit 1
 fi
 
-# Check if update is needed
+# Resolve the checksum before deciding that an installed file is current.
+EXPECTED_CHECKSUM=""
+{% if github_release_download_checksum is defined %}
+EXPECTED_CHECKSUM="{{ github_release_download_checksum | regex_replace('^sha256:', '') }}"
+{% elif github_release_download_checksum_asset is defined %}
+CHECKSUM_FILE=$(mktemp)
+trap 'rm -f "$CHECKSUM_FILE"' EXIT
+if ! curl -fsSL "${ASSET_HEADERS[@]}" -o "$CHECKSUM_FILE" "$CHECKSUM_URL"; then
+    log "ERROR: Failed to download checksum asset"
+    exit 1
+fi
+EXPECTED_CHECKSUM=$(awk -v asset="$ASSET" '$2 == asset || $2 == "*" asset {print $1; exit}' "$CHECKSUM_FILE")
+{% elif not github_release_download_allow_unverified %}
+EXPECTED_CHECKSUM="${DOWNLOAD_DIGEST#sha256:}"
+{% endif %}
+
+{% if not github_release_download_allow_unverified %}
+if [[ ! "$EXPECTED_CHECKSUM" =~ ^[a-fA-F0-9]{64}$ ]]; then
+    log "ERROR: No valid SHA-256 verification source for ${ASSET}"
+    exit 1
+fi
+{% endif %}
+
+# Check both the release marker and installed file integrity.
 if [[ -f "$DEST" ]] && [[ "$CURRENT_VERSION" == "$LATEST_VERSION" ]]; then
-    log "INFO: Already up to date (${CURRENT_VERSION})"
-    exit 0
+    if [[ -z "$EXPECTED_CHECKSUM" ]] || \
+       [[ "$(sha256sum "$DEST" | awk '{print $1}')" == "$EXPECTED_CHECKSUM" ]]; then
+        log "INFO: Already up to date (${CURRENT_VERSION})"
+        exit 0
+    fi
+    log "WARNING: Installed ${ASSET} failed SHA-256 verification; replacing it"
 fi
 
 log "INFO: Updating from ${CURRENT_VERSION:-'not installed'} to ${LATEST_VERSION}"
 
 # Create temp file for download
 TEMP_FILE=$(mktemp)
+{% if github_release_download_checksum_asset is defined %}
+trap 'rm -f "$TEMP_FILE" "$CHECKSUM_FILE"' EXIT
+{% else %}
 trap 'rm -f "$TEMP_FILE"' EXIT
+{% endif %}
 
 # Download the file
 if ! curl -fsSL "${ASSET_HEADERS[@]}" -o "$TEMP_FILE" "$DOWNLOAD_URL"; then
@@ -101,36 +132,13 @@ if ! curl -fsSL "${ASSET_HEADERS[@]}" -o "$TEMP_FILE" "$DOWNLOAD_URL"; then
     exit 1
 fi
 
-{% if github_release_download_checksum is defined %}
-EXPECTED_CHECKSUM="{{ github_release_download_checksum | regex_replace('^sha256:', '') }}"
+if [[ -n "$EXPECTED_CHECKSUM" ]]; then
 ACTUAL_CHECKSUM=$(sha256sum "$TEMP_FILE" | awk '{print $1}')
 if [[ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]]; then
-    log "ERROR: SHA-256 mismatch for ${ASSET}"
-    exit 1
-fi
-{% elif github_release_download_checksum_asset is defined %}
-CHECKSUM_FILE=$(mktemp)
-trap 'rm -f "$TEMP_FILE" "$CHECKSUM_FILE"' EXIT
-if ! curl -fsSL "${ASSET_HEADERS[@]}" -o "$CHECKSUM_FILE" "$CHECKSUM_URL"; then
-    log "ERROR: Failed to download checksum asset"
-    exit 1
-fi
-EXPECTED_CHECKSUM=$(awk -v asset="$ASSET" '$2 == asset || $2 == "*" asset {print $1; exit}' "$CHECKSUM_FILE")
-ACTUAL_CHECKSUM=$(sha256sum "$TEMP_FILE" | awk '{print $1}')
-if [[ ! "$EXPECTED_CHECKSUM" =~ ^[a-fA-F0-9]{64}$ ]] || \
-   [[ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]]; then
     log "ERROR: SHA-256 verification failed for ${ASSET}"
     exit 1
 fi
-{% elif not github_release_download_allow_unverified %}
-EXPECTED_CHECKSUM="${DOWNLOAD_DIGEST#sha256:}"
-ACTUAL_CHECKSUM=$(sha256sum "$TEMP_FILE" | awk '{print $1}')
-if [[ ! "$DOWNLOAD_DIGEST" =~ ^sha256:[a-fA-F0-9]{64}$ ]] || \
-   [[ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]]; then
-    log "ERROR: GitHub asset digest verification failed for ${ASSET}"
-    exit 1
 fi
-{% endif %}
 
 # Ensure destination directory exists
 mkdir -p "$(dirname "$DEST")"

@@ -9,7 +9,8 @@ An Ansible role that downloads files from GitHub releases with version tracking.
 3. Queries the GitHub API for the latest release version
 4. Downloads the file only if:
    - The file doesn't exist, OR
-   - The version file shows an older version than the latest release
+   - The version file shows an older version than the latest release, OR
+   - The installed file no longer matches its expected SHA-256 checksum
 5. (Optional) Installs a standalone bash script and cron job to automatically check for and download updates
 
 ## Requirements
