@@ -54,6 +54,7 @@
         github_release_download_post_update_command: touch /tmp/release-post-update
 
     - name: Record failed post-update activation for retry
+      tags: [molecule-idempotence-notest]
       block:
         - name: Download asset with a failing post-update command
           ansible.builtin.include_role:
@@ -74,11 +75,13 @@
             github_release_download_post_update_failure_recorded: true
 
     - name: Inspect failed activation version marker
+      tags: [molecule-idempotence-notest]
       ansible.builtin.stat:
         path: /opt/test-release/retry.bin.ver
       register: github_release_download_failed_version_marker
 
     - name: Retry release activation
+      tags: [molecule-idempotence-notest]
       ansible.builtin.include_role:
         name: github_release_download
       vars:
@@ -89,6 +92,7 @@
         github_release_download_post_update_command: touch /tmp/retry-post-update
 
     - name: Inspect successful activation markers
+      tags: [molecule-idempotence-notest]
       ansible.builtin.stat:
         path: "{{ item }}"
       loop:
@@ -97,6 +101,7 @@
       register: github_release_download_retry_markers
 
     - name: Verify failed activation was retried
+      tags: [molecule-idempotence-notest]
       ansible.builtin.assert:
         that:
           - github_release_download_post_update_failure_recorded | default(false)
