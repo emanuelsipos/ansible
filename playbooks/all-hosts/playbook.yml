@@ -75,6 +75,8 @@
   vars:
     github_release_download_repo: "moparisthebest/static-curl"
     github_release_download_asset: "curl-amd64"
+    github_release_download_version: "v8.21.0"
+    github_release_download_checksum: "sha256:e45ae1805ceb3f816e9768fbbaba05d98a2dc9c5577f66395f37660941d88e19"
     github_release_download_dest: "/opt/docker/rustic/curl"
     github_release_download_mode: "0755"
     github_release_download_cron_enabled: true

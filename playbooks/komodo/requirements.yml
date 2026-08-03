@@ -3,5 +3,5 @@ roles:
   - name: bpbradley.komodo
     src: https://github.com/bpbradley/ansible-role-komodo.git
     scm: git
-    # No release tags are published upstream; review and update this commit manually.
+    # No release tags are published upstream; Renovate tracks the main branch digest.
     version: "68be87f3fea4ee4c4b28f6c2cf2203b27be6a62a"

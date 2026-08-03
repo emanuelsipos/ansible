@@ -35,7 +35,8 @@ smaller host or group.
 For local use, copy `hosts.example` to `hosts`, replace the example hosts, install the requirements for the playbook being run, and provide the same variables through your preferred secret store.
 
 ```bash
-ansible-galaxy install -r playbooks/all-hosts/requirements.yml
+ansible-galaxy collection install -r playbooks/all-hosts/requirements.yml
+ansible-galaxy role install -r playbooks/all-hosts/requirements.yml
 ansible-playbook -i hosts playbooks/all-hosts/playbook.yml
 ```
 
@@ -43,14 +44,16 @@ Install the hash-locked tools from `requirements-dev.txt`, then run
 `pre-commit install` to apply available ansible-lint fixes before commits. CI
 also opens an autofix PR when a push to `main` introduces fixable lint issues.
 
-To update the development lock on Python 3.14 Linux x86_64:
+Renovate's `pip-compile` manager automatically updates direct dependencies,
+regenerates pinned transitive dependencies and hashes, and performs lock-file
+maintenance. Python and uv are pinned in `renovate.json`; uv is also included in the
+hash lock. To reproduce the lock locally on Linux x86_64 after installing `requirements-dev.txt`:
 
 ```bash
-python -m pip lock -r requirements-dev.in -o /tmp/pylock.ansible-dev.toml
-python .github/scripts/lock_requirements.py \
-  --input requirements-dev.in \
-  --lock /tmp/pylock.ansible-dev.toml \
-  --output requirements-dev.txt
+uv pip compile \
+  --generate-hashes \
+  --output-file=requirements-dev.txt \
+  requirements-dev.in
 ```
 
 ## License

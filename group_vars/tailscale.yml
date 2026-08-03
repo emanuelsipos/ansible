@@ -24,5 +24,4 @@ tailscale_force_reauth: false
 # Additional tailscale up arguments (e.g. "--advertise-exit-node", "--ssh")
 tailscale_args: ""
 
-# Tailscale version — omit to always install latest stable
-# tailscale_version: "1.80.0"
+# Tailscale package versions are managed by the third-party collection.
