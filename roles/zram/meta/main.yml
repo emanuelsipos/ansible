@@ -3,12 +3,11 @@ galaxy_info:
   author: emanuelsipos
   description: Configure compressed RAM swap via systemd-zram-generator
   license: MIT
-  min_ansible_version: "2.14"
+  min_ansible_version: "2.21"
   platforms:
     - name: Debian
       versions:
         - bookworm
-        - trixie
 collections:
   - ansible.posix
 dependencies: []

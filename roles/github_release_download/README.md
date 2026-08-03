@@ -15,7 +15,7 @@ An Ansible role that downloads files from GitHub releases with version tracking.
 
 ## Requirements
 
-- Ansible 2.14+
+- Ansible 2.21+
 - Network access to GitHub API and releases
 - `sha256sum` on the target when cron auto-update is enabled (`curl`, `jq`, and the cron service are installed by the role)
 
