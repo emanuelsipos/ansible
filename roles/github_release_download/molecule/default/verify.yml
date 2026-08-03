@@ -47,7 +47,13 @@
         src: /opt/test-release/asset.bin
       register: github_release_download_repaired_asset
 
+    - name: Inspect post-update marker
+      ansible.builtin.stat:
+        path: /tmp/release-post-update
+      register: github_release_download_post_update_marker
+
     - name: Verify corrupted release asset was repaired
       ansible.builtin.assert:
         that:
           - (github_release_download_repaired_asset.content | b64decode) == 'verified release asset\n'
+          - github_release_download_post_update_marker.stat.exists

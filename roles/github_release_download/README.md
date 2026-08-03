@@ -83,7 +83,9 @@ an existing destination file.
 | `github_release_download_cron_post_update_command` | (unset) | Command to run after update (e.g., restart service) |
 
 The post-update command is rendered directly into a root-owned script and must
-only contain trusted administrator-supplied configuration.
+only contain trusted administrator-supplied configuration. The updater records
+the new version only after this command succeeds, so a failed activation is
+retried on the next run.
 
 ### Other
 
