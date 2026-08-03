@@ -1,5 +1,7 @@
 ---
 roles:
-  # No version tags published upstream; Renovate cannot auto-update this role.
-  # Check https://github.com/bpbradley/ansible-role-komodo manually for changes.
   - name: bpbradley.komodo
+    src: https://github.com/bpbradley/ansible-role-komodo.git
+    scm: git
+    # No release tags are published upstream; review and update this commit manually.
+    version: "68be87f3fea4ee4c4b28f6c2cf2203b27be6a62a"
