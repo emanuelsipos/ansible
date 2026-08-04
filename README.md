@@ -58,7 +58,7 @@ also opens an autofix PR when a push to `main` introduces fixable lint issues.
 
 Renovate's `pip-compile` manager automatically updates direct dependencies,
 regenerates pinned transitive dependencies and hashes, and performs lock-file
-maintenance. Python and uv are pinned in `renovate.json`; uv is also included in the
+maintenance. Python and uv are pinned in `renovate.json5`; uv is also included in the
 hash lock. To reproduce the lock locally on Linux x86_64 after installing `requirements-dev.txt`:
 
 ```bash
