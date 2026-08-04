@@ -1,6 +1,6 @@
 ---
 - name: Manage Komodo Service
-  hosts: "{{ limit | default('komodo') }}"
+  hosts: komodo
   tags: [komodo]
   become: false
 

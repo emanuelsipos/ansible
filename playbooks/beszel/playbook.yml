@@ -1,6 +1,6 @@
 ---
 - name: Install and configure a Beszel binary agent with public key.
-  hosts: "{{ limit | default('all') }}"
+  hosts: all
   tags: [beszel]
   vars_files:
     - ../../vars/beszel.yml

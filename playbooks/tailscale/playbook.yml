@@ -1,6 +1,6 @@
 ---
 - name: Install and configure Tailscale
-  hosts: "{{ limit | default('machines') }}"
+  hosts: machines
   tags: [tailscale]
   vars_files:
     - ../../vars/tailscale.yml
