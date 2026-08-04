@@ -5,6 +5,32 @@
   become: false
 
   pre_tasks:
+    - name: Validate inbound-only Komodo mode
+      ansible.builtin.assert:
+        that:
+          - komodo_server_enabled | bool
+          - komodo_core_address | default('') | string | trim | length == 0
+          - komodo_onboarding_key | default('') | string | trim | length == 0
+          - >-
+            (
+              komodo_extra_env | default([])
+              | selectattr('name', 'defined')
+              | map(attribute='name')
+              | intersect(_komodo_outbound_environment_names)
+              | list
+              | length
+            ) == 0
+        quiet: true
+        fail_msg: Outbound Komodo variables conflict with inbound-only mode
+      vars:
+        _komodo_outbound_environment_names:
+          - PERIPHERY_CORE_ADDRESS
+          - PERIPHERY_CORE_ADDRESSES
+          - PERIPHERY_CONNECT_AS
+          - PERIPHERY_ONBOARDING_KEY
+          - PERIPHERY_ONBOARDING_KEY_FILE
+      tags: [komodo]
+
     - name: Validate Semaphore Komodo variables
       ansible.builtin.assert:
         that:
