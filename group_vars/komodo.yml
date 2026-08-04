@@ -22,9 +22,7 @@ komodo_core_api_secret: >-
       default=undef()
     )
   }}
-# Komodo 2.x server management is handled by the repository playbook so the
-# Periphery public key is included in Core's server record.
-enable_server_management: false
+enable_server_management: true
 # generate_server_passkey: false
 server_address: >-
   {{
