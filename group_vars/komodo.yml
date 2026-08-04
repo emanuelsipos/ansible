@@ -26,9 +26,7 @@ enable_server_management: true
 # generate_server_passkey: false
 server_name: >-
   {{
-    (ansible_host | default(inventory_hostname))
-    if 'lxc' in group_names
-    else inventory_hostname
+    ansible_host | default(inventory_hostname)
   }}
 server_address: >-
   {{
