@@ -29,3 +29,8 @@
   roles:
     - role: bpbradley.komodo
       tags: [komodo]
+
+  post_tasks:
+    - name: Manage Komodo Core server record
+      ansible.builtin.include_tasks: tasks/manage_server.yml
+      tags: [komodo]
