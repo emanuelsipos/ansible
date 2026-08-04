@@ -33,6 +33,8 @@ jobs:
         run: |
           uv pip compile --generate-hashes --output-file=requirements-dev.txt requirements-dev.in
           git diff --exit-code -- requirements-dev.txt
+      - name: Verify playbook variable discovery
+        run: python .github/scripts/verify_playbook_layout.py
       - name: Install all requirements
         run: |
           for f in playbooks/*/requirements.yml; do

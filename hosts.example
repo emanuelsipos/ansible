@@ -1,3 +1,6 @@
+[all:vars]
+ansible_user=ansible
+
 [pve]
 hypervisor-01
 

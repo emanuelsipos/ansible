@@ -1,5 +1,4 @@
 ---
-ansible_user: ansible
 ansible_managed: "**** Warning ****\nThis file is managed by Ansible.\nPlease do not make any changes here."
 public_domain: >-
   {{

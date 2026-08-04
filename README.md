@@ -30,7 +30,19 @@ Attach one variable group to the templates that run these playbooks.
 
 Production inventory is stored in Semaphore. The inventory must provide the
 groups shown in [`hosts.example`](hosts.example); templates may limit runs to a
-smaller host or group.
+smaller host or group. It must also define `ansible_user` as an inventory
+variable, either for all hosts or on each host. SSH identity belongs to the
+inventory rather than repository policy:
+
+```ini
+[all:vars]
+ansible_user=ansible
+```
+
+Each nested playbook directory links `group_vars` to the canonical repository
+root directory. Semaphore installs static inventories beside the selected
+playbook, so these links keep the same group variables available in Semaphore
+and in local runs without maintaining duplicate variable files.
 
 For local use, copy `hosts.example` to `hosts`, replace the example hosts, install the requirements for the playbook being run, and provide the same variables through your preferred secret store.
 
