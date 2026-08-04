@@ -1,0 +1,45 @@
+---
+- name: Activate zram swap device
+  block:
+    - name: Start zram swap device
+      ansible.builtin.systemd_service:
+        name: "dev-{{ zram_device }}.swap"
+        state: started
+
+  rescue:
+    - name: Read zram swap unit status
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - status
+          - "dev-{{ zram_device }}.swap"
+          - "systemd-zram-setup@{{ zram_device }}.service"
+          - --no-pager
+          - --full
+      register: zram_unit_status
+      changed_when: false
+      failed_when: false
+
+    - name: Read zram unit journal
+      ansible.builtin.command:
+        argv:
+          - journalctl
+          - --boot
+          - "--unit=dev-{{ zram_device }}.swap"
+          - "--unit=systemd-zram-setup@{{ zram_device }}.service"
+          - --lines=50
+          - --no-pager
+      register: zram_unit_journal
+      changed_when: false
+      failed_when: false
+
+    - name: Report zram activation failure
+      ansible.builtin.fail:
+        msg: |-
+          Failed to activate dev-{{ zram_device }}.swap.
+
+          Unit status:
+          {{ zram_unit_status.stdout | default('unavailable', true) }}
+
+          Recent journal:
+          {{ zram_unit_journal.stdout | default('unavailable', true) }}

@@ -3,11 +3,14 @@
 Configure compressed RAM swap on Debian/Proxmox VE hosts using
 [`systemd-zram-generator`](https://github.com/systemd/zram-generator). Writes a
 templated `/etc/systemd/zram-generator.conf`, optionally manages `vm.swappiness`
-via a dedicated `sysctl` drop-in, and applies changes at runtime without a reboot.
+via a dedicated `sysctl` drop-in, and safely activates previously inactive
+devices.
 
 ## Requirements
 
-- `ansible.posix` collection (`ansible-galaxy collection install ansible.posix`) — only needed when `zram_manage_swappiness` is `true`.
+- `community.general` collection for loading the `zram` kernel module.
+- `ansible.posix` collection for `vm.swappiness` management when
+  `zram_manage_swappiness` is `true`.
 - A real kernel. `systemd-zram-generator` is a no-op inside containers (it checks `systemd-detect-virt --container`), so this role configures, but does not activate, zram in LXC/Docker. It is intended for the Proxmox VE **host** nodes.
 
 ## Role Variables
@@ -74,9 +77,16 @@ Override the size (e.g. cap a large-RAM host at 8 GiB) and keep swappiness elsew
 
 1. Installs `systemd-zram-generator`.
 2. Detects whether it is running in a container (where the generator is inert).
-3. Renders `zram_devices` into `/etc/systemd/zram-generator.conf`.
-4. On change, reloads systemd (regenerating the `dev-zramN.swap` units) and restarts each device's swap unit — skipped in containers, where a reboot on a real host would be required instead.
-5. Optionally writes `vm.swappiness` to its own `sysctl` drop-in.
+3. Loads the `zram` kernel module on real hosts.
+4. Renders `zram_devices` into `/etc/systemd/zram-generator.conf`.
+5. Regenerates systemd units when the package or configuration changes.
+6. Starts inactive `dev-zramN.swap` units and leaves active swap untouched.
+7. Optionally writes `vm.swappiness` to its own `sysctl` drop-in.
+
+Changes to the size or compression algorithm of an active device are written to
+configuration but are not applied by restarting swap automatically. They take
+effect on the next reboot. This avoids forcing `swapoff` on a host that might
+not have enough free memory to absorb the compressed pages.
 
 ## License
 
