@@ -1,0 +1,57 @@
+---
+- name: Verify
+  hosts: all
+  tasks:
+    - name: Read installed zsh version
+      ansible.builtin.command:
+        cmd: /usr/bin/zsh --version
+      register: zsh_version
+      changed_when: false
+
+    - name: Read test login account
+      ansible.builtin.getent:
+        database: passwd
+        key: ansible
+
+    - name: Inspect managed zsh profile
+      ansible.builtin.stat:
+        path: /home/ansible/.zshrc
+      register: zsh_profile
+
+    - name: Inspect protected zsh history
+      ansible.builtin.stat:
+        path: /home/ansible/.zsh_history
+      register: zsh_history
+
+    - name: Validate managed zsh profile syntax
+      ansible.builtin.command:
+        cmd: /usr/bin/zsh -n /home/ansible/.zshrc
+      changed_when: false
+
+    - name: Exercise managed prompt state
+      become: true
+      become_user: ansible
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/zsh
+          - -ic
+          - >-
+            false; precmd;
+            print -r -- "${PROMPT_EXIT}|${PROMPT_IDENTITY}|${PROMPT}"
+      register: zsh_prompt
+      changed_when: false
+
+    - name: Verify zsh installation, profile, and login shell
+      ansible.builtin.assert:
+        that:
+          - zsh_version.stdout is match('zsh [0-9].*')
+          - ansible_facts.getent_passwd.ansible[-1] == '/usr/bin/zsh'
+          - zsh_profile.stat.exists
+          - zsh_profile.stat.pw_name == 'ansible'
+          - zsh_profile.stat.mode == '0644'
+          - zsh_history.stat.exists
+          - zsh_history.stat.pw_name == 'ansible'
+          - zsh_history.stat.mode == '0600'
+          - "'exit 1' in zsh_prompt.stdout"
+          - "'%n@%m' in zsh_prompt.stdout"
+          - "'%~' in zsh_prompt.stdout"

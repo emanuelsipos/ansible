@@ -1,0 +1,51 @@
+---
+- name: Converge
+  hosts: all
+  vars:
+    zsh_users:
+      - ansible
+  tasks:
+    - name: Configure zsh
+      ansible.builtin.include_role:
+        name: zsh
+
+    - name: Reject an unknown login user
+      block:
+        - name: Configure zsh for an unknown user
+          ansible.builtin.include_role:
+            name: zsh
+          vars:
+            zsh_users:
+              - zsh-role-missing-user
+
+        - name: Fail if the unknown user was accepted
+          ansible.builtin.fail:
+            msg: Unknown zsh user was accepted
+      rescue:
+        - name: Verify the expected user validation failed
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name is search('Verify zsh users exist and have home paths')
+              - >-
+                (
+                  ansible_failed_result.results
+                  | selectattr(
+                      'msg',
+                      'equalto',
+                      'Configured zsh user does not exist or has no home path: zsh-role-missing-user'
+                    )
+                  | list
+                  | length
+                ) == 1
+
+        - name: Check that the unknown user was not created
+          ansible.builtin.command:
+            cmd: getent passwd zsh-role-missing-user
+          register: zsh_missing_user
+          changed_when: false
+          failed_when: false
+
+        - name: Verify the unknown user remains absent
+          ansible.builtin.assert:
+            that:
+              - zsh_missing_user.rc != 0

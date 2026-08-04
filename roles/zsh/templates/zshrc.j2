@@ -1,0 +1,51 @@
+# Managed by Ansible (zsh role). Local changes will be overwritten.
+
+export PATH="$HOME/.local/bin:$PATH"
+
+autoload -Uz compinit vcs_info
+compinit
+bindkey -e
+
+HISTFILE="${ZDOTDIR:-$HOME}/.zsh_history"
+HISTSIZE=10000
+SAVEHIST=10000
+
+setopt APPEND_HISTORY
+setopt EXTENDED_HISTORY
+setopt HIST_EXPIRE_DUPS_FIRST
+setopt HIST_FIND_NO_DUPS
+setopt HIST_IGNORE_ALL_DUPS
+setopt HIST_IGNORE_SPACE
+setopt HIST_NO_STORE
+setopt HIST_REDUCE_BLANKS
+setopt INTERACTIVE_COMMENTS
+setopt PROMPT_SUBST
+setopt SHARE_HISTORY
+
+zstyle ':completion:*' menu select
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
+zstyle ':vcs_info:git:*' formats ' %F{yellow}(%b)%f'
+zstyle ':vcs_info:git:*' actionformats ' %F{yellow}(%b|%a)%f'
+
+if (( EUID == 0 )); then
+    PROMPT_IDENTITY='%B%F{red}%n@%m%f%b'
+else
+    PROMPT_IDENTITY='%F{magenta}%n@%m%f'
+fi
+
+precmd() {
+    local exit_status=$?
+    vcs_info
+
+    if (( exit_status == 0 )); then
+        PROMPT_EXIT=''
+    else
+        PROMPT_EXIT="%F{red}exit ${exit_status}%f "
+    fi
+}
+
+PROMPT='${PROMPT_EXIT}${PROMPT_IDENTITY} %F{cyan}%~%f${vcs_info_msg_0_} %# '
+
+alias ll='ls -alF'
+alias la='ls -A'
+alias l='ls -CF'

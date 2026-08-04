@@ -6,6 +6,8 @@
       tags: [base, upgrades]
     - role: journald_retention
       tags: [base, journald]
+    - role: zsh
+      tags: [base, zsh]
 
 - name: Komodo hosts
   hosts: komodo

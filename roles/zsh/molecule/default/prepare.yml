@@ -1,0 +1,14 @@
+---
+- name: Prepare
+  hosts: all
+  tasks:
+    - name: Refresh package metadata
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create test login user
+      ansible.builtin.user:
+        name: ansible
+        shell: /bin/bash
+        create_home: true

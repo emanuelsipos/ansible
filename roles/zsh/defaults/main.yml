@@ -1,0 +1,5 @@
+---
+zsh_package: zsh
+zsh_shell: /usr/bin/zsh
+zsh_users:
+  - "{{ ansible_user }}"

@@ -6,12 +6,12 @@ Production inventory and credentials are managed in Semaphore and are not stored
 
 ## Playbooks
 
-- `all-hosts`: unattended upgrades, log retention, Docker, host tuning, and backup tooling
+- `all-hosts`: unattended upgrades, log retention, zsh, Docker, host tuning, and backup tooling
 - `beszel`: Beszel agent installation and configuration
 - `komodo`: Komodo periphery and server configuration
 - `tailscale`: Tailscale installation and enrollment
 
-Reusable roles live under [`roles/`](roles/), including journald retention, sysctl configuration, zram, vzdump exclusions, and GitHub release downloads.
+Reusable roles live under [`roles/`](roles/), including journald retention, zsh, sysctl configuration, zram, vzdump exclusions, and GitHub release downloads.
 
 ## Semaphore configuration
 

@@ -1,0 +1,81 @@
+---
+- name: Install zsh
+  ansible.builtin.package:
+    name: "{{ zsh_package }}"
+    state: present
+  tags: [zsh]
+
+- name: Verify configured zsh shell exists
+  ansible.builtin.stat:
+    path: "{{ zsh_shell }}"
+  register: zsh_shell_stat
+  tags: [zsh]
+
+- name: Require an executable zsh shell
+  ansible.builtin.assert:
+    that:
+      - zsh_shell_stat.stat.exists
+      - zsh_shell_stat.stat.executable
+    fail_msg: "Configured zsh shell is not executable: {{ zsh_shell }}"
+  tags: [zsh]
+
+- name: Read local user accounts
+  ansible.builtin.getent:
+    database: passwd
+  tags: [zsh]
+
+- name: Verify zsh users exist and have home paths
+  ansible.builtin.assert:
+    that:
+      - item in ansible_facts.getent_passwd
+      - ansible_facts.getent_passwd[item][4] | length > 0
+    fail_msg: "Configured zsh user does not exist or has no home path: {{ item }}"
+  loop: "{{ zsh_users }}"
+  tags: [zsh]
+
+- name: Inspect zsh user home directories
+  ansible.builtin.stat:
+    path: "{{ ansible_facts.getent_passwd[item][4] }}"
+  loop: "{{ zsh_users }}"
+  register: zsh_user_homes
+  tags: [zsh]
+
+- name: Require zsh user home directories
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isdir
+    fail_msg: "Configured zsh user home is not a directory: {{ item.stat.path }}"
+  loop: "{{ zsh_user_homes.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  tags: [zsh]
+
+- name: Install the server zsh profile
+  ansible.builtin.template:
+    src: zshrc.j2
+    dest: "{{ ansible_facts.getent_passwd[item][4] }}/.zshrc"
+    owner: "{{ item }}"
+    group: "{{ ansible_facts.getent_passwd[item][2] }}"
+    mode: "0644"
+  loop: "{{ zsh_users }}"
+  tags: [zsh]
+
+- name: Protect zsh command history
+  ansible.builtin.file:
+    path: "{{ ansible_facts.getent_passwd[item][4] }}/.zsh_history"
+    state: touch
+    owner: "{{ item }}"
+    group: "{{ ansible_facts.getent_passwd[item][2] }}"
+    mode: "0600"
+    access_time: preserve
+    modification_time: preserve
+  loop: "{{ zsh_users }}"
+  tags: [zsh]
+
+- name: Set zsh as the login shell
+  ansible.builtin.user:
+    name: "{{ item }}"
+    shell: "{{ zsh_shell }}"
+  loop: "{{ zsh_users }}"
+  tags: [zsh]
