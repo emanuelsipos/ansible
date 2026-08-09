@@ -68,6 +68,14 @@ uv pip compile \
   requirements-dev.in
 ```
 
+## Networking
+
+For Komodo hosts, IPv6 forwarding configures the first available interface in
+this order: `komodo_ipv6_interface`, Ansible's default IPv6 interface, then its
+default IPv4 interface. Set `komodo_ipv6_interface` when automatic detection is
+not appropriate; it must name an interface present in Ansible's discovered
+interface facts and contain only letters, digits, dots, underscores, or hyphens.
+
 ## License
 
 [MIT](LICENSE)

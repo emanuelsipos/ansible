@@ -13,14 +13,58 @@
   hosts: komodo
   tags: [komodo]
   pre_tasks:
-    - name: Build IPv6 forwarding sysctl settings with detected interface
+    - name: Validate explicit IPv6 forwarding interface
+      ansible.builtin.assert:
+        that:
+          - >-
+            komodo_ipv6_interface is not defined or
+            (
+              komodo_ipv6_interface is string and
+              komodo_ipv6_interface is match('^[A-Za-z0-9_.-]{1,15}$') and
+              not komodo_ipv6_interface is search('[\r\n]') and
+              komodo_ipv6_interface in ansible_facts.get('interfaces', [])
+            )
+        quiet: true
+        fail_msg: >-
+          komodo_ipv6_interface must be a Linux interface name containing only
+          letters, digits, dots, underscores, or hyphens and present in
+          Ansible's discovered interface facts.
+      tags: [networking, sysctl]
+
+    - name: Select IPv6 forwarding interface
+      ansible.builtin.set_fact:
+        _komodo_ipv6_interface: >-
+          {{
+            komodo_ipv6_interface | default('')
+            or ansible_facts.get('default_ipv6', {}).get('interface', '')
+            or ansible_facts.get('default_ipv4', {}).get('interface', '')
+          }}
+      tags: [networking, sysctl]
+
+    - name: Validate IPv6 forwarding interface
+      ansible.builtin.assert:
+        that:
+          - _komodo_ipv6_interface is string
+          - >-
+            (_komodo_ipv6_interface | string)
+            is match('^[A-Za-z0-9_.-]{1,15}$')
+          - not (_komodo_ipv6_interface | string) is search('[\r\n]')
+          - _komodo_ipv6_interface in ansible_facts.get('interfaces', [])
+        quiet: true
+        fail_msg: >-
+          No safe IPv6 forwarding interface was found. Set komodo_ipv6_interface
+          to a Linux interface name containing only letters, digits, dots,
+          underscores, or hyphens.
+      tags: [networking, sysctl]
+
+    - name: Build IPv6 forwarding sysctl settings with selected interface
       ansible.builtin.set_fact:
         _komodo_sysctl:
           net.ipv6.conf.all.forwarding: "1"
           net.ipv6.conf.all.accept_ra: "2"
           net.ipv6.conf.default.accept_ra: "2"
-          "net.ipv6.conf.{{ ansible_facts['default_ipv4']['interface'] }}.accept_ra": "2"
-      tags: [networking]
+          "net/ipv6/conf/{{ _komodo_ipv6_interface }}/accept_ra": "2"
+      tags: [networking, sysctl]
   roles:
     - role: geerlingguy.docker
       tags: [docker]
