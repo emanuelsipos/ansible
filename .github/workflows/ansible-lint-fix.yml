@@ -35,7 +35,7 @@ jobs:
         run: |
           for f in playbooks/*/requirements.yml; do
             ansible-galaxy collection install -r "$f"
-            ansible-galaxy role install -r "$f"
+            ansible-galaxy role install --roles-path ~/.ansible/roles -r "$f"
           done
       - name: Apply ansible-lint autofixes
         # Same action + SHA as the gate (ansible-lint.yml) so Renovate keeps both
