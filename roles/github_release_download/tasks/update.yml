@@ -1,0 +1,398 @@
+---
+- name: Check if file exists
+  ansible.builtin.stat:
+    path: "{{ github_release_download_dest }}"
+    checksum_algorithm: sha256
+  register: github_release_download_file_stat
+  tags: [github_release]
+
+- name: Check if version file exists
+  ansible.builtin.stat:
+    path: "{{ github_release_download_version_file }}"
+  register: github_release_download_version_file_stat
+  tags: [github_release]
+
+- name: Read current version from version file
+  ansible.builtin.slurp:
+    src: "{{ github_release_download_version_file }}"
+  register: github_release_download_current_version_raw
+  when: github_release_download_version_file_stat.stat.exists
+  tags: [github_release]
+
+- name: Set current version fact
+  ansible.builtin.set_fact:
+    github_release_download_current_version: >-
+      {{ (github_release_download_current_version_raw.content | b64decode | trim)
+         if github_release_download_version_file_stat.stat.exists else '' }}
+  tags: [github_release]
+
+- name: Get release info from GitHub API
+  ansible.builtin.uri:
+    url: >-
+      {{ github_release_download_api_url }}/{{ github_release_download_repo }}/releases/{{
+        'tags/' + github_release_download_version
+        if github_release_download_version is defined
+        else 'latest'
+      }}
+    method: GET
+    return_content: true
+    follow_redirects: none
+    headers:
+      Accept: "application/vnd.github+json"
+      Authorization: >-
+        {{ 'Bearer ' + github_release_download_token
+           if github_release_download_token is defined else omit }}
+    unredirected_headers:
+      - Authorization
+  register: github_release_download_release_info
+  no_log: "{{ github_release_download_token is defined }}"
+  tags: [github_release]
+
+- name: Parse GitHub release response
+  ansible.builtin.set_fact:
+    github_release_download_release: >-
+      {{
+        github_release_download_release_info.json
+        | default(github_release_download_release_info.content | from_json)
+      }}
+  tags: [github_release]
+
+- name: Set latest version and download URL facts
+  ansible.builtin.set_fact:
+    github_release_download_latest_version: "{{ github_release_download_release.tag_name }}"
+    github_release_download_url: >-
+      {{ github_release_download_release.assets
+         | selectattr('name', 'equalto', github_release_download_asset)
+         | map(attribute=('url' if github_release_download_token is defined else 'browser_download_url'))
+         | first | default('') }}
+    github_release_download_checksum_url: >-
+      {{ github_release_download_release.assets
+         | selectattr('name', 'equalto', github_release_download_checksum_asset | default(''))
+         | map(attribute=('url' if github_release_download_token is defined else 'browser_download_url'))
+         | first | default('') }}
+    github_release_download_asset_digest: >-
+      {{ github_release_download_release.assets
+         | selectattr('name', 'equalto', github_release_download_asset)
+         | map(attribute='digest')
+         | first | default('') }}
+  tags: [github_release]
+
+- name: Validate release assets
+  ansible.builtin.assert:
+    that:
+      - github_release_download_latest_version | length > 0
+      - github_release_download_url | length > 0
+      - github_release_download_checksum_asset is not defined or github_release_download_checksum_url | length > 0
+      - >-
+        github_release_download_url is match('^https://') or
+        github_release_download_url
+        is match('^http://(127[.]0[.]0[.]1|localhost)(:[0-9]+)?(/|$)')
+      - >-
+        github_release_download_checksum_asset is not defined or
+        github_release_download_checksum_url is match('^https://') or
+        github_release_download_checksum_url
+        is match('^http://(127[.]0[.]0[.]1|localhost)(:[0-9]+)?(/|$)')
+      - >-
+        github_release_download_token is not defined or
+        github_release_download_url == github_release_download_api_origin or
+        github_release_download_url.startswith(
+          github_release_download_api_origin ~ '/'
+        )
+      - >-
+        github_release_download_token is not defined or
+        github_release_download_checksum_asset is not defined or
+        github_release_download_checksum_url == github_release_download_api_origin or
+        github_release_download_checksum_url.startswith(
+          github_release_download_api_origin ~ '/'
+        )
+    quiet: true
+    fail_msg: >-
+      Requested release assets must exist, use a secure URL, and keep
+      authenticated requests on the configured API origin
+  tags: [github_release]
+
+- name: Probe release checksum manifest URL without following redirects
+  ansible.builtin.uri:
+    url: "{{ github_release_download_checksum_url }}"
+    method: GET
+    return_content: false
+    follow_redirects: none
+    status_code: [200, 301, 302, 303, 307, 308]
+    headers: >-
+      {{
+        {'Accept': 'application/octet-stream'}
+        | combine(
+            {'Authorization': 'Bearer ' + github_release_download_token}
+            if github_release_download_token is defined else {}
+          )
+      }}
+    unredirected_headers:
+      - Authorization
+  register: github_release_download_checksum_probe
+  when: github_release_download_checksum_asset is defined
+  no_log: "{{ github_release_download_token is defined }}"
+  tags: [github_release]
+
+- name: Resolve release checksum manifest URL
+  ansible.builtin.set_fact:
+    github_release_download_resolved_checksum_url: >-
+      {{
+        github_release_download_checksum_probe.location
+        if github_release_download_checksum_probe.status != 200
+        else github_release_download_checksum_url
+      }}
+  when: github_release_download_checksum_asset is defined
+  tags: [github_release]
+
+- name: Require a secure release checksum redirect
+  ansible.builtin.assert:
+    that:
+      - >-
+        github_release_download_checksum_probe.status == 200 or
+        github_release_download_resolved_checksum_url is match('^https://')
+    quiet: true
+    fail_msg: Release checksum redirects must use HTTPS
+  when: github_release_download_checksum_asset is defined
+  tags: [github_release]
+
+- name: Fetch release checksum manifest
+  ansible.builtin.uri:
+    url: "{{ github_release_download_resolved_checksum_url }}"
+    method: GET
+    return_content: true
+    follow_redirects: none
+    headers: >-
+      {{
+        {'Accept': 'application/octet-stream'}
+        | combine(
+            {'Authorization': 'Bearer ' + github_release_download_token}
+            if github_release_download_token is defined and
+               github_release_download_resolved_checksum_url ==
+               github_release_download_checksum_url
+            else {}
+          )
+      }}
+    unredirected_headers:
+      - Authorization
+  register: github_release_download_checksum_manifest
+  when: github_release_download_checksum_asset is defined
+  no_log: "{{ github_release_download_token is defined }}"
+  tags: [github_release]
+
+- name: Resolve expected release checksum
+  ansible.builtin.set_fact:
+    github_release_download_expected_checksum: >-
+      {{
+        (github_release_download_checksum | regex_replace('^sha256:', '') | lower)
+        if github_release_download_checksum is defined
+        else (
+          github_release_download_checksum_manifest.content
+          | regex_findall(
+              '(?m)^([a-fA-F0-9]{64})[ \t]+\\*?'
+              ~ (github_release_download_asset | regex_escape)
+              ~ '\r?$'
+            )
+          | first
+          | default('')
+          | lower
+          if github_release_download_checksum_asset is defined
+          else (github_release_download_asset_digest | lower | regex_replace('^sha256:', ''))
+        )
+      }}
+  tags: [github_release]
+
+- name: Validate release checksum
+  ansible.builtin.assert:
+    that:
+      - >-
+        github_release_download_expected_checksum | length == 0 or
+        github_release_download_expected_checksum is match('^[a-f0-9]{64}$')
+      - >-
+        github_release_download_allow_unverified or
+        github_release_download_expected_checksum is match('^[a-f0-9]{64}$')
+    quiet: true
+    fail_msg: Release asset has no allowed SHA-256 verification source
+  tags: [github_release]
+
+- name: Determine if download is needed
+  ansible.builtin.set_fact:
+    github_release_download_needs_update: >-
+      {{ not github_release_download_file_stat.stat.exists
+         or github_release_download_current_version != github_release_download_latest_version
+         or (
+           github_release_download_expected_checksum | length > 0
+           and (github_release_download_file_stat.stat.checksum | default('') | lower)
+               != github_release_download_expected_checksum
+         ) }}
+  tags: [github_release]
+
+- name: Display version information
+  ansible.builtin.debug:
+    msg: >-
+      File exists: {{ github_release_download_file_stat.stat.exists }},
+      Current version: {{ github_release_download_current_version | default('none') }},
+      Latest version: {{ github_release_download_latest_version }},
+      Download needed: {{ github_release_download_needs_update }}
+  when: github_release_download_debug | default(false)
+  tags: [github_release]
+
+- name: Probe release asset URL without following redirects
+  ansible.builtin.uri:
+    url: "{{ github_release_download_url }}"
+    method: GET
+    return_content: false
+    follow_redirects: none
+    status_code: [200, 301, 302, 303, 307, 308]
+    headers: >-
+      {{
+        {'Accept': 'application/octet-stream'}
+        | combine(
+            {'Authorization': 'Bearer ' + github_release_download_token}
+            if github_release_download_token is defined else {}
+          )
+      }}
+    unredirected_headers:
+      - Authorization
+  register: github_release_download_asset_probe
+  when: github_release_download_needs_update
+  no_log: "{{ github_release_download_token is defined }}"
+  tags: [github_release]
+
+- name: Resolve release asset URL
+  ansible.builtin.set_fact:
+    github_release_download_resolved_url: >-
+      {{
+        github_release_download_asset_probe.location
+        if github_release_download_asset_probe.status != 200
+        else github_release_download_url
+      }}
+  when: github_release_download_needs_update
+  tags: [github_release]
+
+- name: Require a secure release asset redirect
+  ansible.builtin.assert:
+    that:
+      - >-
+        github_release_download_asset_probe.status == 200 or
+        github_release_download_resolved_url is match('^https://')
+    quiet: true
+    fail_msg: Release asset redirects must use HTTPS
+  when: github_release_download_needs_update
+  tags: [github_release]
+
+- name: Download and atomically install release asset
+  when: github_release_download_needs_update
+  tags: [github_release]
+  block:
+    - name: Create release asset temporary file
+      ansible.builtin.tempfile:
+        state: file
+        path: "{{ github_release_download_dest | dirname }}"
+        prefix: ".{{ github_release_download_asset }}."
+      register: github_release_download_temp_file
+      changed_when: false
+
+    - name: Download release asset without following redirects
+      ansible.builtin.uri:
+        url: "{{ github_release_download_resolved_url }}"
+        method: GET
+        dest: "{{ github_release_download_temp_file.path }}"
+        force: true
+        follow_redirects: none
+        status_code: 200
+        headers: >-
+          {{
+            {'Accept': 'application/octet-stream'}
+            | combine(
+                {'Authorization': 'Bearer ' + github_release_download_token}
+                if github_release_download_token is defined and
+                   github_release_download_resolved_url ==
+                   github_release_download_url
+                else {}
+              )
+          }}
+        unredirected_headers:
+          - Authorization
+      no_log: "{{ github_release_download_token is defined }}"
+      changed_when: false
+
+    - name: Calculate downloaded release checksum
+      ansible.builtin.stat:
+        path: "{{ github_release_download_temp_file.path }}"
+        checksum_algorithm: sha256
+      register: github_release_download_temp_stat
+
+    - name: Verify downloaded release checksum
+      ansible.builtin.assert:
+        that:
+          - >-
+            github_release_download_expected_checksum | length == 0 or
+            github_release_download_temp_stat.stat.checksum | lower ==
+            github_release_download_expected_checksum
+        quiet: true
+        fail_msg: Downloaded release asset failed SHA-256 verification
+
+    - name: Apply downloaded release file attributes
+      ansible.builtin.file:
+        path: "{{ github_release_download_temp_file.path }}"
+        mode: "{{ github_release_download_mode }}"
+        owner: >-
+          {{
+            github_release_download_owner
+            if github_release_download_owner is defined
+            else (
+              github_release_download_file_stat.stat.uid
+              if github_release_download_file_stat.stat.exists
+              else omit
+            )
+          }}
+        group: >-
+          {{
+            github_release_download_group
+            if github_release_download_group is defined
+            else (
+              github_release_download_file_stat.stat.gid
+              if github_release_download_file_stat.stat.exists
+              else omit
+            )
+          }}
+
+    - name: Atomically activate downloaded release asset
+      ansible.builtin.command:
+        argv:
+          - mv
+          - -f
+          - --
+          - "{{ github_release_download_temp_file.path }}"
+          - "{{ github_release_download_dest }}"
+      changed_when: true
+  always:
+    - name: Remove release asset temporary file
+      ansible.builtin.file:
+        path: "{{ github_release_download_temp_file.path | default('') }}"
+        state: absent
+      changed_when: false
+      when: github_release_download_temp_file.path | default('') | length > 0
+
+- name: Run post-update command
+  ansible.builtin.command:
+    cmd: "{{ github_release_download_post_update_command }}"
+  when:
+    - github_release_download_needs_update
+    - github_release_download_post_update_command is defined
+  changed_when: true
+  tags: [github_release]
+
+- name: Write version file
+  ansible.builtin.copy:
+    content: "{{ github_release_download_latest_version }}"
+    dest: "{{ github_release_download_version_file }}"
+    mode: '0644'
+  when: github_release_download_needs_update
+  tags: [github_release]
+
+- name: Set result facts
+  ansible.builtin.set_fact:
+    github_release_download_changed: "{{ github_release_download_needs_update }}"
+    github_release_download_resolved_version: "{{ github_release_download_latest_version }}"
+  tags: [github_release]

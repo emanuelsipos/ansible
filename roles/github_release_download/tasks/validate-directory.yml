@@ -1,0 +1,30 @@
+---
+- name: Validate trusted directory ancestry
+  ansible.builtin.command:
+    argv:
+      - /bin/bash
+      - -c
+      - |
+        set -euo pipefail
+        path=$1
+        allow_missing=$2
+        current=
+        IFS=/ read -r -a components <<< "$path"
+        for component in "${components[@]}"; do
+          [[ -n "$component" ]] || continue
+          current="${current}/${component}"
+          if [[ ! -e "$current" && ! -L "$current" ]]; then
+            [[ "$allow_missing" == true ]] && exit 0
+            exit 1
+          fi
+          [[ -d "$current" && ! -L "$current" ]]
+          [[ "$(stat -c '%u' -- "$current")" == 0 ]]
+          [[ "$(stat -c '%a' -- "$current")" =~ ^[0-7]?[0-7][0145][0145]$ ]]
+        done
+      - bash
+      - "{{ github_release_download_directory_path }}"
+      - "{{ github_release_download_directory_allow_missing | ternary('true', 'false') }}"
+  register: github_release_download_directory_ancestry
+  changed_when: false
+  failed_when: github_release_download_directory_ancestry.rc != 0
+  tags: [always]

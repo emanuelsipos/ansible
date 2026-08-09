@@ -14,7 +14,12 @@
         mode: "0755"
       loop:
         - test/project/releases
+        - test/project/releases/tags
+        - test/invalid/releases
+        - test/redirect/releases
+        - test/cross-origin/releases
         - downloads
+        - downloads/redirect
 
     - name: Write release asset
       ansible.builtin.copy:
@@ -24,7 +29,7 @@
 
     - name: Write checksum asset
       ansible.builtin.copy:
-        content: "8c76b21b0bac56b7cbdf8558106b98602ccee25504ae1604984f2078e84b009f  asset.bin\n"
+        content: "8C76B21B0BAC56B7CBDF8558106B98602CCEE25504AE1604984F2078E84B009F  asset.bin\n"
         dest: /tmp/github-release-fixture/downloads/checksums.txt
         mode: "0644"
 
@@ -38,7 +43,7 @@
                 "name": "asset.bin",
                 "url": "http://127.0.0.1:8000/downloads/asset.bin",
                 "browser_download_url": "http://127.0.0.1:8000/downloads/asset.bin",
-                "digest": "sha256:8c76b21b0bac56b7cbdf8558106b98602ccee25504ae1604984f2078e84b009f"
+                "digest": "sha256:8C76B21B0BAC56B7CBDF8558106B98602CCEE25504AE1604984F2078E84B009F"
               },
               {
                 "name": "checksums.txt",
@@ -48,6 +53,79 @@
             ]
           }
         dest: /tmp/github-release-fixture/test/project/releases/latest
+        mode: "0644"
+
+    - name: Write tagged release API response
+      ansible.builtin.copy:
+        content: |
+          {
+            "tag_name": "v1.0.0",
+            "assets": [
+              {
+                "name": "asset.bin",
+                "url": "http://127.0.0.1:8000/downloads/asset.bin",
+                "browser_download_url": "http://127.0.0.1:8000/downloads/asset.bin",
+                "digest": "sha256:8C76B21B0BAC56B7CBDF8558106B98602CCEE25504AE1604984F2078E84B009F"
+              },
+              {
+                "name": "checksums.txt",
+                "url": "http://127.0.0.1:8000/downloads/checksums.txt",
+                "browser_download_url": "http://127.0.0.1:8000/downloads/checksums.txt"
+              }
+            ]
+          }
+        dest: /tmp/github-release-fixture/test/project/releases/tags/v1.0.0
+        mode: "0644"
+
+    - name: Write release API response with an invalid digest
+      ansible.builtin.copy:
+        content: |
+          {
+            "tag_name": "v1.0.0",
+            "assets": [
+              {
+                "name": "asset.bin",
+                "url": "http://127.0.0.1:8000/downloads/asset.bin",
+                "browser_download_url": "http://127.0.0.1:8000/downloads/asset.bin",
+                "digest": "sha256:not-a-digest"
+              }
+            ]
+          }
+        dest: /tmp/github-release-fixture/test/invalid/releases/latest
+        mode: "0644"
+
+    - name: Write release API response with an insecure redirect
+      ansible.builtin.copy:
+        content: |
+          {
+            "tag_name": "v1.0.0",
+            "assets": [
+              {
+                "name": "asset.bin",
+                "url": "http://127.0.0.1:8000/downloads/redirect",
+                "browser_download_url": "http://127.0.0.1:8000/downloads/redirect",
+                "digest": "sha256:8C76B21B0BAC56B7CBDF8558106B98602CCEE25504AE1604984F2078E84B009F"
+              }
+            ]
+          }
+        dest: /tmp/github-release-fixture/test/redirect/releases/latest
+        mode: "0644"
+
+    - name: Write release API response with a cross-origin authenticated asset
+      ansible.builtin.copy:
+        content: |
+          {
+            "tag_name": "v1.0.0",
+            "assets": [
+              {
+                "name": "asset.bin",
+                "url": "http://127.0.0.1:8001/downloads/asset.bin",
+                "browser_download_url": "http://127.0.0.1:8001/downloads/asset.bin",
+                "digest": "sha256:8C76B21B0BAC56B7CBDF8558106B98602CCEE25504AE1604984F2078E84B009F"
+              }
+            ]
+          }
+        dest: /tmp/github-release-fixture/test/cross-origin/releases/latest
         mode: "0644"
 
     - name: Start fixture server

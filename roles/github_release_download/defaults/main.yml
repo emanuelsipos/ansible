@@ -25,6 +25,7 @@ github_release_download_mode: "0755"              # File permissions (0755 = rwx
 # Verify the downloaded asset with either a fixed checksum or a checksum file
 # published in the same GitHub release. The checksum asset must use standard
 # sha256sum format: "<digest>  <filename>".
+# A fixed checksum requires github_release_download_version.
 # github_release_download_checksum: "sha256:<64-character digest>"
 # github_release_download_checksum_asset: "checksums.txt"
 # GitHub API asset digests are used automatically when neither option is set.
@@ -40,7 +41,7 @@ github_release_download_api_url: "https://api.github.com/repos"
 github_release_download_token_file: >-
   /etc/github-release-updater/{{
     github_release_download_repo | regex_replace('[^a-zA-Z0-9]', '-')
-  }}.token
+  }}-{{ (github_release_download_dest | hash('sha256'))[0:12] }}.token
 
 # ==============================================================================
 # DEBUG
@@ -63,6 +64,10 @@ github_release_download_cron_month: "*"
 github_release_download_cron_user: "root"                                # User to run the cron job as
 github_release_download_cron_script_dir: "/opt/github-release-updater"  # Where to store update scripts
 github_release_download_cron_log_file: "/var/log/github-release-updater.log"  # Log file for updates
+github_release_download_lock_dir: "/var/lib/github-release-updater/locks"
+github_release_download_lock_wait_seconds: 30
+github_release_download_packages:
+  - util-linux
 github_release_download_cron_packages:
   - curl
   - jq

@@ -12,24 +12,89 @@
         path: "{{ item }}"
       loop:
         - /etc/github-release-updater
-        - /etc/github-release-updater/test-project.token
-        - /opt/test-release/updater/github-release-update-test-project-asset-bin.sh
+        - /etc/github-release-updater/test-project-28864cfb70bd.token
+        - /opt/test-release/updater/github-release-update-test-project-asset-bin-28864cfb70bd.sh
+        - /var/lib/github-release-updater/locks
+        - /var/lib/github-release-updater/locks/28864cfb70bd73fb98d14d5d0849320716f8e5dfe67287ad737dfd56d862a863.lock
       register: github_release_download_updater_files
 
     - name: Read updater script
       ansible.builtin.slurp:
-        src: /opt/test-release/updater/github-release-update-test-project-asset-bin.sh
+        src: /opt/test-release/updater/github-release-update-test-project-asset-bin-28864cfb70bd.sh
       register: github_release_download_updater_script
+
+    - name: Inspect updater script directory
+      ansible.builtin.stat:
+        path: /opt/test-release/updater
+      register: github_release_download_script_dir
+
+    - name: Inspect destination directory
+      ansible.builtin.stat:
+        path: /opt/test-release
+      register: github_release_download_dest_dir
+
+    - name: Validate updater script syntax
+      ansible.builtin.command:
+        cmd: bash -n /opt/test-release/updater/github-release-update-test-project-asset-bin-28864cfb70bd.sh
+      changed_when: false
 
     - name: Verify release hardening
       ansible.builtin.assert:
         that:
           - (github_release_download_test_asset.content | b64decode) == 'verified release asset\n'
           - github_release_download_updater_files.results[0].stat.mode == '0700'
+          - github_release_download_updater_files.results[0].stat.pw_name == 'root'
+          - github_release_download_updater_files.results[0].stat.gr_name == 'root'
+          - github_release_download_script_dir.stat.pw_name == 'root'
+          - github_release_download_script_dir.stat.gr_name == 'root'
+          - github_release_download_dest_dir.stat.mode == '0711'
           - github_release_download_updater_files.results[1].stat.mode == '0600'
           - github_release_download_updater_files.results[2].stat.mode == '0700'
+          - github_release_download_updater_files.results[3].stat.mode == '0700'
+          - github_release_download_updater_files.results[3].stat.pw_name == 'root'
+          - github_release_download_updater_files.results[4].stat.mode == '0600'
+          - github_release_download_updater_files.results[4].stat.pw_name == 'root'
           - "'molecule-test-token' not in (github_release_download_updater_script.content | b64decode)"
           - "'EXISTING_UID' in (github_release_download_updater_script.content | b64decode)"
+          - "'flock --exclusive --nonblock 9' in (github_release_download_updater_script.content | b64decode)"
+          - >-
+            (github_release_download_updater_script.content | b64decode)
+            is search(
+              "(?m)^LOCK_FILE=['\"]?/var/lib/github-release-updater/locks/"
+              ~ "28864cfb70bd73fb98d14d5d0849320716f8e5dfe67287ad737dfd56d862a863"
+              ~ "\\.lock['\"]?$"
+            )
+          - "'mktemp -- \"${DEST_DIR}/.${ASSET}.XXXXXX\"' in (github_release_download_updater_script.content | b64decode)"
+          - "'chmod -- \"$FILE_MODE\" \"$TEMP_FILE\"' in (github_release_download_updater_script.content | b64decode)"
+          - "'mv -f -- \"$VERSION_TEMP_FILE\" \"$VERSION_FILE\"' in (github_release_download_updater_script.content | b64decode)"
+          - "'tolower($1)' in (github_release_download_updater_script.content | b64decode)"
+          - "'--max-redirs 0' in (github_release_download_updater_script.content | b64decode)"
+          - "'--proto-redir' in (github_release_download_updater_script.content | b64decode)"
+
+    - name: Read cron configuration
+      ansible.builtin.command:
+        cmd: crontab -l
+      register: github_release_download_crontab
+      changed_when: false
+
+    - name: Assert cron uses the quoted hashed script path
+      ansible.builtin.assert:
+        that:
+          - >-
+            "'/opt/test-release/updater/github-release-update-test-project-asset-bin-28864cfb70bd.sh'"
+            in github_release_download_crontab.stdout
+
+    - name: Read hostile adjacent lock symlink target
+      ansible.builtin.slurp:
+        src: /tmp/adjacent-lock-target
+      register: github_release_download_adjacent_lock_target
+
+    - name: Verify adjacent lock path was not used
+      ansible.builtin.assert:
+        that:
+          - >-
+            (github_release_download_adjacent_lock_target.content | b64decode)
+            == 'must remain unchanged\n'
 
     - name: Inspect controller post-update marker
       ansible.builtin.stat:
@@ -52,9 +117,55 @@
         dest: /opt/test-release/asset.bin
         mode: "0755"
 
+    - name: Hold the updater destination lock
+      ansible.builtin.command:
+        cmd: >-
+          flock /var/lib/github-release-updater/locks/28864cfb70bd73fb98d14d5d0849320716f8e5dfe67287ad737dfd56d862a863.lock
+          -c 'touch /tmp/github-release-updater-lock-held; sleep 15'
+      async: 30
+      poll: 0
+      register: github_release_download_lock_job
+      changed_when: false
+
+    - name: Wait for updater lock acquisition
+      ansible.builtin.wait_for:
+        path: /tmp/github-release-updater-lock-held
+        state: present
+        timeout: 5
+
+    - name: Run updater while another instance holds the lock
+      ansible.builtin.command:
+        cmd: /opt/test-release/updater/github-release-update-test-project-asset-bin-28864cfb70bd.sh
+      changed_when: false
+
+    - name: Read asset after blocked updater run
+      ansible.builtin.slurp:
+        src: /opt/test-release/asset.bin
+      register: github_release_download_blocked_asset
+
+    - name: Inspect post-update marker after blocked updater run
+      ansible.builtin.stat:
+        path: /tmp/release-post-update
+      register: github_release_download_blocked_post_update_marker
+
+    - name: Verify updater does not run while locked
+      ansible.builtin.assert:
+        that:
+          - (github_release_download_blocked_asset.content | b64decode) == 'corrupted\n'
+          - not github_release_download_blocked_post_update_marker.stat.exists
+
+    - name: Wait for updater lock release
+      ansible.builtin.async_status:
+        jid: "{{ github_release_download_lock_job.ansible_job_id }}"
+      register: github_release_download_lock_result
+      until: github_release_download_lock_result.finished
+      retries: 20
+      delay: 1
+      changed_when: false
+
     - name: Run updater against the current release
       ansible.builtin.command:
-        cmd: /opt/test-release/updater/github-release-update-test-project-asset-bin.sh
+        cmd: /opt/test-release/updater/github-release-update-test-project-asset-bin-28864cfb70bd.sh
       changed_when: true
 
     - name: Read repaired release asset
@@ -64,11 +175,15 @@
 
     - name: Inspect post-update marker
       ansible.builtin.stat:
-        path: /tmp/release-post-update
-      register: github_release_download_post_update_marker
+        path: "{{ item }}"
+      loop:
+        - /tmp/release-post-update
+        - "/var/log/test release updater's.log"
+      register: github_release_download_updater_markers
 
     - name: Verify corrupted release asset was repaired
       ansible.builtin.assert:
         that:
           - (github_release_download_repaired_asset.content | b64decode) == 'verified release asset\n'
-          - github_release_download_post_update_marker.stat.exists
+          - github_release_download_updater_markers.results[0].stat.exists
+          - github_release_download_updater_markers.results[1].stat.exists

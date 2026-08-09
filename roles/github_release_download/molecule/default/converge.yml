@@ -2,6 +2,47 @@
 - name: Converge
   hosts: all
   tasks:
+    - name: Create trusted destination fixture
+      ansible.builtin.file:
+        path: /opt/test-release
+        state: directory
+        mode: "0711"
+
+    - name: Create trusted directory behind a symlinked ancestor
+      ansible.builtin.file:
+        path: /opt/test-release/ancestor-safe
+        state: directory
+        mode: "0711"
+
+    - name: Create symlinked destination ancestor
+      ansible.builtin.file:
+        src: /opt/test-release
+        dest: /opt/test-release-route
+        state: link
+
+    - name: Reject a symlinked destination ancestor
+      block:
+        - name: Run role through a symlinked ancestor
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/project
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /opt/test-release-route/ancestor-safe/asset.bin
+
+        - name: Fail if symlinked destination ancestor was accepted
+          ansible.builtin.fail:
+            msg: Symlinked destination ancestor was accepted
+      rescue:
+        - name: Verify the role rejected the symlinked ancestor
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Validate trusted directory ancestry'
+
+        - name: Record destination ancestry validation
+          ansible.builtin.set_fact:
+            github_release_download_destination_ancestry_validation_passed: true
+
     - name: Reject invalid required variables
       block:
         - name: Run role with an invalid repository
@@ -16,6 +57,11 @@
           ansible.builtin.fail:
             msg: Invalid variables were accepted
       rescue:
+        - name: Verify the role rejected invalid required variables
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Validate required GitHub release variables'
+
         - name: Record required-variable validation
           ansible.builtin.set_fact:
             github_release_download_required_validation_passed: true
@@ -28,16 +74,310 @@
           vars:
             github_release_download_repo: test/project
             github_release_download_asset: missing.bin
-            github_release_download_dest: /tmp/missing.bin
+            github_release_download_dest: /opt/test-release/missing.bin
             github_release_download_api_url: http://127.0.0.1:8000
 
         - name: Fail if missing asset was accepted
           ansible.builtin.fail:
             msg: Missing release asset was accepted
       rescue:
+        - name: Verify the role rejected the missing asset
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Validate release assets'
+
         - name: Record release-asset validation
           ansible.builtin.set_fact:
             github_release_download_asset_validation_passed: true
+
+    - name: Reject a release asset containing a newline
+      block:
+        - name: Run role with an unsafe asset name
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/project
+            github_release_download_asset: "asset.bin\n"
+            github_release_download_dest: /tmp/unsafe-asset.bin
+
+        - name: Fail if unsafe asset name was accepted
+          ansible.builtin.fail:
+            msg: Unsafe asset name was accepted
+      rescue:
+        - name: Verify the role rejected the newline-bearing asset name
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Validate required GitHub release variables'
+
+        - name: Record asset-name validation
+          ansible.builtin.set_fact:
+            github_release_download_asset_name_validation_passed: true
+
+    - name: Reject a release asset containing whitespace
+      block:
+        - name: Run role with an unsafe asset name
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/project
+            github_release_download_asset: "asset file.bin"
+            github_release_download_dest: /tmp/unsafe-asset-whitespace.bin
+
+        - name: Fail if whitespace-bearing asset name was accepted
+          ansible.builtin.fail:
+            msg: Whitespace-bearing asset name was accepted
+      rescue:
+        - name: Verify the role rejected the whitespace-bearing asset name
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Validate required GitHub release variables'
+
+        - name: Record whitespace asset-name validation
+          ansible.builtin.set_fact:
+            github_release_download_asset_whitespace_validation_passed: true
+
+    - name: Reject an unsafe cron schedule field
+      block:
+        - name: Run role with an unsafe cron minute field
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/project
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /tmp/unsafe-cron-field.bin
+            github_release_download_cron_enabled: true
+            github_release_download_cron_minute: "* *"
+
+        - name: Fail if unsafe cron minute field was accepted
+          ansible.builtin.fail:
+            msg: Unsafe cron minute field was accepted
+      rescue:
+        - name: Verify the role rejected the unsafe cron field
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Validate required GitHub release variables'
+
+        - name: Record cron-field validation
+          ansible.builtin.set_fact:
+            github_release_download_cron_field_validation_passed: true
+
+    - name: Reject credentials over a non-loopback HTTP API
+      block:
+        - name: Run role with an insecure authenticated API
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/project
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /tmp/insecure-api.bin
+            github_release_download_api_url: http://example.invalid/repos
+            github_release_download_token: unsafe-token
+
+        - name: Fail if insecure authenticated API was accepted
+          ansible.builtin.fail:
+            msg: Insecure authenticated API was accepted
+      rescue:
+        - name: Verify the role rejected the insecure API
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Validate required GitHub release variables'
+
+        - name: Record authenticated API validation
+          ansible.builtin.set_fact:
+            github_release_download_authenticated_api_validation_passed: true
+
+    - name: Reject an unpinned fixed checksum
+      block:
+        - name: Run role with an unpinned fixed checksum
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/project
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /tmp/unpinned-checksum.bin
+            github_release_download_checksum: sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+        - name: Fail if unpinned fixed checksum was accepted
+          ansible.builtin.fail:
+            msg: Unpinned fixed checksum was accepted
+      rescue:
+        - name: Verify the role rejected the unpinned checksum
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Validate required GitHub release variables'
+
+        - name: Record fixed-checksum version validation
+          ansible.builtin.set_fact:
+            github_release_download_fixed_checksum_validation_passed: true
+
+    - name: Reject a destination path with traversal
+      block:
+        - name: Run role with an unsafe destination path
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/project
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /tmp/../unsafe-destination.bin
+
+        - name: Fail if unsafe destination path was accepted
+          ansible.builtin.fail:
+            msg: Unsafe destination path was accepted
+      rescue:
+        - name: Verify the role rejected destination traversal
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Validate required GitHub release variables'
+
+        - name: Record destination-path validation
+          ansible.builtin.set_fact:
+            github_release_download_destination_validation_passed: true
+
+    - name: Reject a destination path alias
+      block:
+        - name: Run role with repeated destination separators
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/project
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /opt//test-release/asset.bin
+            github_release_download_api_url: http://127.0.0.1:8000
+            github_release_download_checksum_asset: checksums.txt
+
+        - name: Fail if destination path alias was accepted
+          ansible.builtin.fail:
+            msg: Destination path alias was accepted
+      rescue:
+        - name: Verify the role rejected the destination path alias
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Validate required GitHub release variables'
+
+        - name: Record destination-alias validation
+          ansible.builtin.set_fact:
+            github_release_download_destination_alias_validation_passed: true
+
+    - name: Verify destination path alias was rejected
+      ansible.builtin.assert:
+        that:
+          - github_release_download_destination_alias_validation_passed | default(false)
+
+    - name: Create unrelated token cleanup fixture
+      ansible.builtin.copy:
+        content: "must remain unchanged\n"
+        dest: /etc/github-release-unrelated.token
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Reject an unapproved disabled-cron token path
+      block:
+        - name: Run disabled cron cleanup with an unapproved token path
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/project
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /opt/test-release/unsafe-cleanup.bin
+            github_release_download_api_url: http://127.0.0.1:8000
+            github_release_download_checksum_asset: checksums.txt
+            github_release_download_token_file: /etc/github-release-unrelated.token
+            github_release_download_cron_enabled: false
+
+        - name: Fail if unapproved token cleanup path was accepted
+          ansible.builtin.fail:
+            msg: Unapproved token cleanup path was accepted
+      rescue:
+        - name: Verify the role rejected the unapproved token path
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Validate required GitHub release variables'
+
+        - name: Inspect unrelated token cleanup fixture
+          ansible.builtin.stat:
+            path: /etc/github-release-unrelated.token
+          register: github_release_download_unrelated_token
+
+        - name: Verify unrelated token cleanup fixture was preserved
+          ansible.builtin.assert:
+            that:
+              - github_release_download_unrelated_token.stat.exists
+
+        - name: Record disabled-cron token-path validation
+          ansible.builtin.set_fact:
+            github_release_download_disabled_token_validation_passed: true
+
+    - name: Verify unapproved token cleanup path was rejected
+      ansible.builtin.assert:
+        that:
+          - github_release_download_disabled_token_validation_passed | default(false)
+
+    - name: Reject a boolean lock wait
+      block:
+        - name: Run role with a boolean lock wait
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/project
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /tmp/boolean-lock-wait.bin
+            github_release_download_lock_wait_seconds: true
+
+        - name: Fail if boolean lock wait was accepted
+          ansible.builtin.fail:
+            msg: Boolean lock wait was accepted
+      rescue:
+        - name: Verify the role rejected the boolean lock wait
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Validate required GitHub release variables'
+
+        - name: Record lock-wait validation
+          ansible.builtin.set_fact:
+            github_release_download_lock_wait_validation_passed: true
+
+    - name: Create insecure cron destination fixture
+      ansible.builtin.file:
+        path: /tmp/github-release-insecure
+        state: directory
+        mode: "0777"
+
+    - name: Reject an insecure destination directory
+      block:
+        - name: Run role with an insecure cron destination directory
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/project
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /tmp/github-release-insecure/asset.bin
+
+        - name: Fail if insecure destination was accepted
+          ansible.builtin.fail:
+            msg: Insecure destination directory was accepted
+      rescue:
+        - name: Verify the role rejected the insecure destination directory
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Validate trusted directory ancestry'
+
+        - name: Record destination directory validation
+          ansible.builtin.set_fact:
+            github_release_download_cron_destination_validation_passed: true
+
+    - name: Create adjacent lock symlink target
+      ansible.builtin.copy:
+        content: "must remain unchanged\n"
+        dest: /tmp/adjacent-lock-target
+        mode: "0644"
+
+    - name: Create hostile destination-adjacent lock symlink
+      ansible.builtin.file:
+        src: /tmp/adjacent-lock-target
+        dest: /opt/test-release/asset.bin.lock
+        state: link
+        force: true
 
     - name: Download a verified release asset
       ansible.builtin.include_role:
@@ -47,11 +387,136 @@
         github_release_download_asset: asset.bin
         github_release_download_dest: /opt/test-release/asset.bin
         github_release_download_api_url: http://127.0.0.1:8000
+        github_release_download_checksum_asset: checksums.txt
         github_release_download_token: molecule-test-token
         github_release_download_cron_enabled: true
         github_release_download_cron_script_dir: /opt/test-release/updater
-        github_release_download_cron_log_file: /tmp/test-release-updater.log
-        github_release_download_post_update_command: touch /tmp/release-post-update
+        github_release_download_cron_log_file: "/var/log/test release updater's.log"
+        github_release_download_post_update_command: >-
+          /bin/sh -c 'if flock --exclusive --nonblock
+          /var/lib/github-release-updater/locks/28864cfb70bd73fb98d14d5d0849320716f8e5dfe67287ad737dfd56d862a863.lock
+          -c true; then printf acquired; else printf blocked; fi
+          > /tmp/github-release-controller-activation-lock;
+          sleep 3; touch /tmp/release-post-update'
+
+    - name: Read the controller activation lock observation
+      tags: [molecule-idempotence-notest]
+      ansible.builtin.slurp:
+        src: /tmp/github-release-controller-activation-lock
+      register: github_release_download_activation_lock
+
+    - name: Verify the controller retained its lock throughout activation
+      tags: [molecule-idempotence-notest]
+      ansible.builtin.assert:
+        that:
+          - >-
+            (github_release_download_activation_lock.content | b64decode | trim)
+            == 'blocked'
+
+    - name: Verify controller lock contention cleanup
+      tags: [molecule-idempotence-notest]
+      block:
+        - name: Reset controller contention markers
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /tmp/github-release-controller-lock-held
+            - /tmp/github-release-controller-lock-release
+          changed_when: false
+
+        - name: Hold the secure controller lock
+          ansible.builtin.command:
+            cmd: >-
+              flock /var/lib/github-release-updater/locks/28864cfb70bd73fb98d14d5d0849320716f8e5dfe67287ad737dfd56d862a863.lock
+              -c 'touch /tmp/github-release-controller-lock-held;
+              while [ ! -e /tmp/github-release-controller-lock-release ]; do sleep 1; done'
+          async: 300
+          poll: 0
+          register: github_release_download_controller_contention_job
+          changed_when: false
+
+        - name: Wait for secure controller lock acquisition
+          ansible.builtin.wait_for:
+            path: /tmp/github-release-controller-lock-held
+            state: present
+            timeout: 5
+
+        - name: Expect controller lock acquisition to time out
+          block:
+            - name: Run role while controller lock is held
+              ansible.builtin.include_role:
+                name: github_release_download
+              vars:
+                github_release_download_repo: test/project
+                github_release_download_asset: asset.bin
+                github_release_download_dest: /opt/test-release/asset.bin
+                github_release_download_api_url: http://127.0.0.1:8000
+                github_release_download_lock_wait_seconds: 1
+                github_release_download_checksum_asset: checksums.txt
+                github_release_download_token: molecule-test-token
+                github_release_download_cron_enabled: true
+                github_release_download_cron_script_dir: /opt/test-release/updater
+                github_release_download_cron_log_file: "/var/log/test release updater's.log"
+                github_release_download_post_update_command: >-
+                  /bin/sh -c 'if flock --exclusive --nonblock
+                  /var/lib/github-release-updater/locks/28864cfb70bd73fb98d14d5d0849320716f8e5dfe67287ad737dfd56d862a863.lock
+                  -c true; then printf acquired; else printf blocked; fi
+                  > /tmp/github-release-controller-activation-lock;
+                  sleep 3; touch /tmp/release-post-update'
+
+            - name: Fail if controller lock contention was accepted
+              ansible.builtin.fail:
+                msg: Controller lock contention was accepted
+          rescue:
+            - name: Verify the role rejected controller lock contention
+              ansible.builtin.assert:
+                that:
+                  - ansible_failed_task.name == 'Require shared release update lock acquisition'
+
+            - name: Record controller lock contention
+              ansible.builtin.set_fact:
+                github_release_download_controller_contention_passed: true
+      always:
+        - name: Release the secure controller lock
+          ansible.builtin.file:
+            path: /tmp/github-release-controller-lock-release
+            state: touch
+            mode: "0600"
+          changed_when: false
+
+        - name: Wait for secure controller lock release
+          ansible.builtin.async_status:
+            jid: "{{ github_release_download_controller_contention_job.ansible_job_id }}"
+          register: github_release_download_controller_contention_result
+          until: github_release_download_controller_contention_result.finished
+          retries: 20
+          delay: 1
+          changed_when: false
+
+        - name: Find leaked controller lock state directories
+          ansible.builtin.find:
+            paths: /tmp
+            patterns: github-release-download-lock.*
+            file_type: directory
+          register: github_release_download_controller_lock_state_dirs
+
+        - name: Verify controller contention cleanup
+          ansible.builtin.assert:
+            that:
+              - github_release_download_controller_contention_passed | default(false)
+              - github_release_download_controller_lock_state_dirs.matched == 0
+
+    - name: Reset failed post-update activation fixtures
+      tags: [molecule-idempotence-notest]
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /opt/test-release/retry.bin
+        - /opt/test-release/retry.bin.ver
+        - /tmp/retry-post-update
+      changed_when: false
 
     - name: Record failed post-update activation for retry
       tags: [molecule-idempotence-notest]
@@ -70,6 +535,11 @@
           ansible.builtin.fail:
             msg: Failing post-update command was accepted
       rescue:
+        - name: Verify the role rejected the failed post-update command
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Run post-update command'
+
         - name: Record post-update failure
           ansible.builtin.set_fact:
             github_release_download_post_update_failure_recorded: true
@@ -117,21 +587,213 @@
           vars:
             github_release_download_repo: test/project
             github_release_download_asset: asset.bin
-            github_release_download_dest: /tmp/bad-checksum.bin
+            github_release_download_dest: /opt/test-release/bad-checksum.bin
             github_release_download_api_url: http://127.0.0.1:8000
+            github_release_download_version: v1.0.0
             github_release_download_checksum: sha256:0000000000000000000000000000000000000000000000000000000000000000
 
         - name: Fail if incorrect checksum was accepted
           ansible.builtin.fail:
             msg: Incorrect checksum was accepted
       rescue:
+        - name: Verify the role rejected the incorrect checksum
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Verify downloaded release checksum'
+
         - name: Record checksum validation
           ansible.builtin.set_fact:
             github_release_download_checksum_validation_passed: true
+
+    - name: Reject a supplied malformed API digest when unverified fallback is allowed
+      block:
+        - name: Run role with a malformed API digest
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/invalid
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /opt/test-release/invalid-api-digest.bin
+            github_release_download_api_url: http://127.0.0.1:8000
+            github_release_download_allow_unverified: true
+
+        - name: Fail if malformed API digest was accepted
+          ansible.builtin.fail:
+            msg: Malformed API digest was accepted
+      rescue:
+        - name: Verify the role rejected the malformed API digest
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Validate release checksum'
+
+        - name: Record API digest validation
+          ansible.builtin.set_fact:
+            github_release_download_api_digest_validation_passed: true
+
+    - name: Reject an asset redirect to HTTP
+      block:
+        - name: Run role with an insecure asset redirect
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/redirect
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /opt/test-release/insecure-redirect.bin
+            github_release_download_api_url: http://127.0.0.1:8000
+
+        - name: Fail if insecure asset redirect was accepted
+          ansible.builtin.fail:
+            msg: Insecure asset redirect was accepted
+      rescue:
+        - name: Verify the role rejected the insecure asset redirect
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Require a secure release asset redirect'
+
+        - name: Record asset redirect validation
+          ansible.builtin.set_fact:
+            github_release_download_redirect_validation_passed: true
+
+    - name: Reject an authenticated cross-origin asset URL
+      block:
+        - name: Run role with a cross-origin authenticated asset
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/cross-origin
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /opt/test-release/cross-origin.bin
+            github_release_download_api_url: http://127.0.0.1:8000
+            github_release_download_token: molecule-test-token
+
+        - name: Fail if authenticated cross-origin asset was accepted
+          ansible.builtin.fail:
+            msg: Authenticated cross-origin asset was accepted
+      rescue:
+        - name: Verify the role rejected the cross-origin asset
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Validate release assets'
+
+        - name: Record authenticated asset-origin validation
+          ansible.builtin.set_fact:
+            github_release_download_asset_origin_validation_passed: true
+
+    - name: Verify destination-specific cron updater identity and cleanup
+      tags: [molecule-idempotence-notest]
+      block:
+        - name: Enable another updater for the same release asset
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/project
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /opt/test-release/second.bin
+            github_release_download_api_url: http://127.0.0.1:8000
+            github_release_download_token: molecule-test-token
+            github_release_download_cron_enabled: true
+            github_release_download_cron_script_dir: /opt/test-release/updater
+
+        - name: Inspect destination-specific updater scripts
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          loop:
+            - /opt/test-release/updater/github-release-update-test-project-asset-bin-28864cfb70bd.sh
+            - /opt/test-release/updater/github-release-update-test-project-asset-bin-8e5b720cd9fe.sh
+          register: github_release_download_destination_scripts
+
+        - name: Inspect destination-specific updater tokens
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          loop:
+            - /etc/github-release-updater/test-project-28864cfb70bd.token
+            - /etc/github-release-updater/test-project-8e5b720cd9fe.token
+          register: github_release_download_destination_tokens
+
+        - name: Read destination-specific cron jobs
+          ansible.builtin.command:
+            cmd: crontab -l
+          register: github_release_download_destination_crontab
+          changed_when: false
+
+        - name: Verify both destination-specific updaters coexist
+          ansible.builtin.assert:
+            that:
+              - github_release_download_destination_scripts.results[0].stat.exists
+              - github_release_download_destination_scripts.results[1].stat.exists
+              - github_release_download_destination_tokens.results[0].stat.exists
+              - github_release_download_destination_tokens.results[1].stat.exists
+              - >-
+                'github-release-update-test-project-asset-bin-28864cfb70bd.sh'
+                in github_release_download_destination_crontab.stdout
+              - >-
+                'github-release-update-test-project-asset-bin-8e5b720cd9fe.sh'
+                in github_release_download_destination_crontab.stdout
+
+        - name: Disable the second destination updater
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/project
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /opt/test-release/second.bin
+            github_release_download_api_url: http://127.0.0.1:8000
+            github_release_download_cron_enabled: false
+            github_release_download_cron_script_dir: /opt/test-release/updater
+
+        - name: Inspect updater scripts after disabling one destination
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          loop:
+            - /opt/test-release/updater/github-release-update-test-project-asset-bin-28864cfb70bd.sh
+            - /opt/test-release/updater/github-release-update-test-project-asset-bin-8e5b720cd9fe.sh
+          register: github_release_download_disabled_scripts
+
+        - name: Inspect updater tokens after disabling one destination
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          loop:
+            - /etc/github-release-updater/test-project-28864cfb70bd.token
+            - /etc/github-release-updater/test-project-8e5b720cd9fe.token
+          register: github_release_download_disabled_tokens
+
+        - name: Read cron jobs after disabling one destination
+          ansible.builtin.command:
+            cmd: crontab -l
+          register: github_release_download_disabled_crontab
+          changed_when: false
+
+        - name: Verify disabling one updater preserves the other
+          ansible.builtin.assert:
+            that:
+              - github_release_download_disabled_scripts.results[0].stat.exists
+              - not github_release_download_disabled_scripts.results[1].stat.exists
+              - github_release_download_disabled_tokens.results[0].stat.exists
+              - not github_release_download_disabled_tokens.results[1].stat.exists
+              - >-
+                'github-release-update-test-project-asset-bin-28864cfb70bd.sh'
+                in github_release_download_disabled_crontab.stdout
+              - >-
+                'github-release-update-test-project-asset-bin-8e5b720cd9fe.sh'
+                not in github_release_download_disabled_crontab.stdout
 
     - name: Verify rejected inputs
       ansible.builtin.assert:
         that:
           - github_release_download_required_validation_passed | default(false)
+          - github_release_download_destination_ancestry_validation_passed | default(false)
           - github_release_download_asset_validation_passed | default(false)
+          - github_release_download_asset_name_validation_passed | default(false)
+          - github_release_download_asset_whitespace_validation_passed | default(false)
+          - github_release_download_cron_field_validation_passed | default(false)
+          - github_release_download_authenticated_api_validation_passed | default(false)
+          - github_release_download_cron_destination_validation_passed | default(false)
+          - github_release_download_fixed_checksum_validation_passed | default(false)
+          - github_release_download_destination_validation_passed | default(false)
+          - github_release_download_destination_alias_validation_passed | default(false)
+          - github_release_download_disabled_token_validation_passed | default(false)
+          - github_release_download_lock_wait_validation_passed | default(false)
           - github_release_download_checksum_validation_passed | default(false)
+          - github_release_download_api_digest_validation_passed | default(false)
+          - github_release_download_redirect_validation_passed | default(false)
+          - github_release_download_asset_origin_validation_passed | default(false)

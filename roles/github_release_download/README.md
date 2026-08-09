@@ -44,9 +44,12 @@ For APIs that do not provide asset digests, configure one of these options:
 | `github_release_download_checksum_asset` | (unset) | Release asset containing standard `sha256sum` entries |
 | `github_release_download_allow_unverified` | `false` | Explicitly allow a download when no SHA-256 source is available |
 
-A fixed checksum must be paired with `github_release_download_version`; it
-cannot verify a future release. Use a checksum asset when intentionally
-tracking the latest release.
+Expected and calculated SHA-256 values are normalized to lowercase before
+comparison, so standard manifests and API digests may use either hex case.
+
+A fixed checksum is accepted only with `github_release_download_version`: the
+role rejects an unpinned fixed checksum because it cannot verify a future
+release. Use a checksum asset when intentionally tracking the latest release.
 
 ### Authentication
 
@@ -54,7 +57,7 @@ tracking the latest release.
 |----------|---------|-------------|
 | `github_release_download_token` | (unset) | Optional GitHub token for API and release-asset requests. Required for private repositories and recommended when running against many hosts in parallel. |
 | `github_release_download_api_url` | `https://api.github.com/repos` | GitHub-compatible releases API base URL |
-| `github_release_download_token_file` | `/etc/github-release-updater/<repository>.token` | Repository-specific, root-only token file read by the cron updater |
+| `github_release_download_token_file` | `/etc/github-release-updater/<repository>-<destination-sha256-prefix>.token` | Destination-specific, root-only token file read by the cron updater; custom names must remain directly under `/etc/github-release-updater` |
 
 ### File Permissions
 
@@ -66,6 +69,11 @@ tracking the latest release.
 
 When owner or group is omitted, the cron updater preserves that attribute from
 an existing destination file.
+
+API and asset URLs must use HTTPS. Loopback HTTP URLs are allowed for local
+integration testing only. Authenticated asset URLs must remain on the configured
+API origin, authorization headers are never forwarded to a redirect target, and
+redirects cannot downgrade a request to HTTP.
 
 ### Cron Auto-Update
 
@@ -80,12 +88,33 @@ an existing destination file.
 | `github_release_download_cron_user` | `root` | Must be `root`; updater files are root-only |
 | `github_release_download_cron_script_dir` | `/opt/github-release-updater` | Where to store update scripts |
 | `github_release_download_cron_log_file` | `/var/log/github-release-updater.log` | Log file path |
+| `github_release_download_lock_dir` | `/var/lib/github-release-updater/locks` | Root-only directory for destination-specific update locks |
+| `github_release_download_lock_wait_seconds` | `30` | Maximum controller wait for the per-destination update lock |
 | `github_release_download_post_update_command` | (unset) | Command to run after update (e.g., restart service) |
 
 The post-update command is rendered directly into a root-owned script and must
 only contain trusted administrator-supplied configuration. The updater records
 the new version only after this command succeeds, so a failed activation is
 retried on the next run.
+
+All other values rendered into the updater script are shell-quoted. Repository,
+asset, and checksum-asset names cannot contain a slash or whitespace; repository
+components are limited to letters, digits, dots, underscores, and hyphens.
+Destination, updater, log, and token paths must be absolute, newline-free paths
+without `.` or `..` segments; repeated separators are also rejected. Cron fields
+use numeric, range, step, list, and `*` forms only, without whitespace or names.
+The script directory is root-owned,
+and the cron command single-quotes the complete updater path. The updater log is
+a root-owned regular file in a trusted root-owned directory. All release updates
+require the destination directory to be root-owned, non-symlinked, and not
+writable by group or other users. Controller and cron updates share a
+destination-specific, SHA-256-named lock in the root-only lock directory. The
+controller holder retains the lock until the update and post-update command
+finish; if the controller is interrupted, the orphaned holder fails closed
+until it is terminated or the host reboots.
+Cron script, token, and job identities include the destination, so the same
+release asset can be managed at multiple paths. Disabling cron for a destination
+removes that destination's updater artifacts without affecting the others.
 
 ### Other
 
@@ -217,13 +246,16 @@ After running with cron enabled:
 └── curl.ver
 
 /opt/github-release-updater/
-└── github-release-update-moparisthebest-static-curl-curl-amd64.sh
+└── github-release-update-moparisthebest-static-curl-curl-amd64-<sha256-prefix>.sh
+
+/var/lib/github-release-updater/locks/
+└── <destination-sha256>.lock
 
 /var/log/
 └── github-release-updater.log            # Update logs
 
 # Cron entry (crontab -l):
-# 30 3 * * * /opt/github-release-updater/github-release-update-moparisthebest-static-curl-curl-amd64.sh
+# 30 3 * * * '/opt/github-release-updater/github-release-update-moparisthebest-static-curl-curl-amd64-<sha256-prefix>.sh'
 ```
 
 ## How the Cron Update Works
@@ -231,16 +263,19 @@ After running with cron enabled:
 When `github_release_download_cron_enabled: true`, the role:
 
 1. Creates a standalone bash script that:
-   - Queries the GitHub API for the latest release
-   - Compares with the current version file
-   - Downloads the new version if needed
-   - Sets the correct permissions
+    - Queries the GitHub API for the latest release
+    - Compares with the current version file
+    - Downloads the new version if needed
+    - Shares a kernel-managed per-destination `flock` with controller updates
+    - Verifies, sets ownership and permissions, then atomically renames a
+      same-directory temporary binary into place
+    - Atomically writes the version marker after successful activation
    - Logs all activity
    - Optionally runs a post-update command
 
 2. Installs a cron job to run this script on your specified schedule
 
-The script is standalone after deployment and does not require Ansible or Python. It uses `curl`, `jq`, and `sha256sum`; the role installs the first two when cron updates are enabled. API tokens are stored separately in a root-only file rather than embedded in the script.
+The script is standalone after deployment and does not require Ansible or Python. It uses `curl`, `flock`, `jq`, and `sha256sum`; the role installs the required packages. Token and script filenames include a short SHA-256 suffix to prevent collisions after name sanitization. API tokens are stored separately in a root-only file rather than embedded in the script.
 
 ## License
 
