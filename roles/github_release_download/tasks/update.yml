@@ -6,6 +6,18 @@
   register: github_release_download_file_stat
   tags: [github_release]
 
+- name: Reject a directory release destination
+  ansible.builtin.assert:
+    that:
+      - >-
+        not github_release_download_file_stat.stat.exists or
+        not github_release_download_file_stat.stat.isdir
+    quiet: true
+    fail_msg: >-
+      GitHub release destination must be a file path, not a directory:
+      {{ github_release_download_dest }}
+  tags: [github_release]
+
 - name: Check if version file exists
   ansible.builtin.stat:
     path: "{{ github_release_download_version_file }}"

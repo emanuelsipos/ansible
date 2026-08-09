@@ -366,6 +366,63 @@
           ansible.builtin.set_fact:
             github_release_download_cron_destination_validation_passed: true
 
+    - name: Create directory destination fixture
+      ansible.builtin.file:
+        path: /opt/test-release/directory-destination
+        state: directory
+        mode: "0755"
+
+    - name: Reject a directory release destination
+      block:
+        - name: Run role with a directory destination
+          ansible.builtin.include_role:
+            name: github_release_download
+          vars:
+            github_release_download_repo: test/project
+            github_release_download_asset: asset.bin
+            github_release_download_dest: /opt/test-release/directory-destination
+            github_release_download_api_url: http://127.0.0.1:8000
+            github_release_download_checksum_asset: checksums.txt
+            github_release_download_post_update_command: >-
+              touch /tmp/github-release-directory-destination-hook
+
+        - name: Fail if directory destination was accepted
+          ansible.builtin.fail:
+            msg: Directory release destination was accepted
+      rescue:
+        - name: Verify the role rejected the directory destination
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Reject a directory release destination'
+
+        - name: Inspect directory destination side effects
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          loop:
+            - /opt/test-release/directory-destination.ver
+            - /tmp/github-release-directory-destination-hook
+          register: github_release_download_directory_destination_side_effects
+
+        - name: Find files added to the directory destination
+          ansible.builtin.find:
+            paths: /opt/test-release/directory-destination
+            file_type: any
+            hidden: true
+          register: github_release_download_directory_destination_files
+
+        - name: Verify directory destination was not modified
+          ansible.builtin.assert:
+            that:
+              - >-
+                github_release_download_directory_destination_side_effects.results
+                | map(attribute='stat.exists') | select('equalto', true)
+                | list | length == 0
+              - github_release_download_directory_destination_files.matched == 0
+
+        - name: Record directory-destination validation
+          ansible.builtin.set_fact:
+            github_release_download_directory_destination_validation_passed: true
+
     - name: Create adjacent lock symlink target
       ansible.builtin.copy:
         content: "must remain unchanged\n"
@@ -788,6 +845,7 @@
           - github_release_download_cron_field_validation_passed | default(false)
           - github_release_download_authenticated_api_validation_passed | default(false)
           - github_release_download_cron_destination_validation_passed | default(false)
+          - github_release_download_directory_destination_validation_passed | default(false)
           - github_release_download_fixed_checksum_validation_passed | default(false)
           - github_release_download_destination_validation_passed | default(false)
           - github_release_download_destination_alias_validation_passed | default(false)
