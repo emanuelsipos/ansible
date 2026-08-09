@@ -27,5 +27,4 @@
     state: present
     reload: false
   loop: "{{ sysctl_settings | dict2items }}"
-  notify: Reload sysctl
   tags: [sysctl]

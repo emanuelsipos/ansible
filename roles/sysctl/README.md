@@ -76,7 +76,9 @@ to keep networking and PVE-specific settings in separate files:
 
 1. Loads each module listed in `sysctl_modules` with `modprobe` and writes a file to `/etc/modules-load.d/` so it persists across reboots.
 2. Applies each setting in `sysctl_settings` to `sysctl_drop_in_file` using `ansible.posix.sysctl`.
-3. Notifies a handler that runs `sysctl --system` to reload all drop-in files.
+3. Applies each value immediately with `sysctl_set: true`. It does not run a
+   global `sysctl --system` reload, so unrelated drop-ins cannot mask failures
+   or override the selected settings.
 
 ## License
 

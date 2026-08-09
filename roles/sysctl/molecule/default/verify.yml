@@ -22,3 +22,39 @@
         that:
           - "'net.core.somaxconn=1024' in (sysctl_content['content'] | b64decode)"
           - "'vm.swappiness=10' in (sysctl_content['content'] | b64decode)"
+
+    - name: Read live sysctl settings
+      ansible.builtin.command:
+        argv:
+          - sysctl
+          - -n
+          - "{{ item.key }}"
+      loop:
+        - key: net.core.somaxconn
+          value: "1024"
+        - key: vm.swappiness
+          value: "10"
+      register: sysctl_live_values
+      changed_when: false
+
+    - name: Assert sysctl settings are active
+      ansible.builtin.assert:
+        that:
+          - item.stdout == item.item.value
+      loop: "{{ sysctl_live_values.results }}"
+
+    - name: Assert settings avoid a global sysctl reload
+      ansible.builtin.assert:
+        that:
+          - >-
+            'sysctl_set: true' in
+            lookup(
+              'ansible.builtin.file',
+              playbook_dir ~ '/../../tasks/main.yml'
+            )
+          - >-
+            'reload: false' in
+            lookup(
+              'ansible.builtin.file',
+              playbook_dir ~ '/../../tasks/main.yml'
+            )
