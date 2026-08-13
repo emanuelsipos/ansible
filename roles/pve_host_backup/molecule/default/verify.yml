@@ -82,6 +82,23 @@
           - pve-host-backup.timer
       changed_when: false
 
+    - name: Read deployment paper key validation invocations
+      ansible.builtin.slurp:
+        src: /run/pve-host-backup-paperkey-invocations
+      register: pve_host_backup_deployment_key_validations
+
+    - name: Verify deployment decrypt-tested the encryption key
+      ansible.builtin.assert:
+        that:
+          - >-
+            'paperkey' in
+            (pve_host_backup_deployment_key_validations.content | b64decode)
+
+    - name: Clear deployment paper key validation invocations
+      ansible.builtin.file:
+        path: /run/pve-host-backup-paperkey-invocations
+        state: absent
+
     - name: Create test systemd credential directory
       ansible.builtin.file:
         path: /run/pve-host-backup-test-credentials
@@ -119,7 +136,30 @@
           - /usr/local/sbin/pve-host-backup
       environment:
         CREDENTIALS_DIRECTORY: /run/pve-host-backup-test-credentials
+      register: pve_host_backup_script_run
       changed_when: true
+
+    - name: Verify paper key output was suppressed
+      ansible.builtin.assert:
+        that:
+          - >-
+            'MOLECULE_SENSITIVE_PAPERKEY_STDOUT' not in
+            pve_host_backup_script_run.stdout
+          - >-
+            'MOLECULE_SENSITIVE_PAPERKEY_STDERR' not in
+            pve_host_backup_script_run.stderr
+
+    - name: Read runtime paper key validation invocations
+      ansible.builtin.slurp:
+        src: /run/pve-host-backup-paperkey-invocations
+      register: pve_host_backup_runtime_key_validations
+
+    - name: Verify runtime decrypt-tested the encryption key once
+      ansible.builtin.assert:
+        that:
+          - >-
+            (pve_host_backup_runtime_key_validations.content | b64decode)
+            == 'paperkey\n'
 
     - name: Remove test systemd credential directory
       ansible.builtin.file:

@@ -251,7 +251,7 @@
             argv:
               - proxmox-backup-client
               - key
-              - show
+              - paperkey
               - >-
                 {{ pve_host_backup_config_dir
                    }}/.encryption-key.candidate

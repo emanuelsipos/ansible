@@ -5,7 +5,7 @@
     pve_host_backup_enabled: true
     pve_host_backup_manage_packages: false
     pve_host_backup_require_quorum: false
-    pve_host_backup_validate_encryption_key: false
+    pve_host_backup_validate_encryption_key: true
     pve_host_backup_timer_calendar: "2099-01-01 00:00:00"
     pve_host_backup_repository: >-
       backup@pbs!molecule@pbs.example.test:8007:data3
