@@ -1,0 +1,20 @@
+---
+- name: Converge
+  hosts: all
+  vars:
+    pve_host_backup_enabled: true
+    pve_host_backup_manage_packages: false
+    pve_host_backup_require_quorum: false
+    pve_host_backup_validate_encryption_key: false
+    pve_host_backup_timer_calendar: "2099-01-01 00:00:00"
+    pve_host_backup_repository: >-
+      backup@pbs!molecule@pbs.example.test:8007:data3
+    pve_host_backup_fingerprint: >-
+      00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff
+    pve_host_backup_namespace: pve-hosts/molecule
+    pve_host_backup_id: molecule
+    pve_host_backup_token_secret: molecule-token-secret
+    pve_host_backup_encryption_key: '{"kdf":null,"created":1,"modified":1,"data":"test"}'
+    pve_host_backup_encryption_passphrase: molecule-key-passphrase
+  roles:
+    - role: pve_host_backup

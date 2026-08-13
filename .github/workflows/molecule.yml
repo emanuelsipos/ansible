@@ -26,6 +26,7 @@ jobs:
         role:
           - github_release_download
           - journald_retention
+          - pve_host_backup
           - sysctl
           - vzdump
           - zsh
