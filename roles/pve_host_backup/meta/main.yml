@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  author: Emanuel Sipos
+  namespace: emanuelsipos
+  role_name: pve_host_backup
+  description: Encrypted PVE host configuration backups to PBS
+  license: MIT
+  min_ansible_version: "2.21"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+dependencies: []

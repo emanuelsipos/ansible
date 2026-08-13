@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily encrypted PVE host configuration backup
+
+[Timer]
+OnCalendar={{ pve_host_backup_timer_calendar }}
+Persistent=true
+RandomizedDelaySec={{ pve_host_backup_timer_randomized_delay }}
+Unit=pve-host-backup.service
+
+[Install]
+WantedBy=timers.target

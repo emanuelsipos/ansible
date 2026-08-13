@@ -1,0 +1,58 @@
+---
+pve_host_backup_enabled: false
+pve_host_backup_purge: false
+pve_host_backup_manage_packages: true
+pve_host_backup_manage_timer: true
+pve_host_backup_validate_encryption_key: true
+
+pve_host_backup_packages:
+  - iproute2
+  - jq
+  - pciutils
+  - proxmox-backup-client
+  - sqlite3
+  - util-linux
+
+pve_host_backup_repository: ""
+pve_host_backup_fingerprint: ""
+pve_host_backup_namespace: ""
+pve_host_backup_id: "{{ inventory_hostname }}"
+pve_host_backup_token_secret: ""
+pve_host_backup_encryption_key: ""
+pve_host_backup_encryption_passphrase: ""
+
+pve_host_backup_config_dir: /etc/pve-host-backup
+pve_host_backup_credential_path: "{{ pve_host_backup_config_dir }}/credentials.json"
+pve_host_backup_script_path: /usr/local/sbin/pve-host-backup
+pve_host_backup_lock_path: /run/pve-host-backup/backup.lock
+pve_host_backup_staging_parent: /run/pve-host-backup
+
+pve_host_backup_require_quorum: true
+pve_host_backup_timeout_start_sec: 6h
+pve_host_backup_timer_calendar: "*-*-* 03:15:00"
+pve_host_backup_timer_randomized_delay: 10m
+
+pve_host_backup_archives:
+  - name: pve
+    path: /etc/pve
+    max_bytes: 268435456
+  - name: etc
+    path: /etc
+    max_bytes: 1073741824
+  - name: local
+    path: /usr/local
+    max_bytes: 1073741824
+  - name: opt
+    path: /opt
+    max_bytes: 1073741824
+
+# Patterns are relative to each pxar archive root and apply to every archive.
+pve_host_backup_excludes:
+  - /pve/**
+  - /pve-host-backup/**
+
+# Preserve only explicitly classified, non-secret root-owned configuration.
+pve_host_backup_selected_root_files:
+  - /root/.forward
+  - /root/.ssh/config
+  - /root/.ssh/id_rsa.pub

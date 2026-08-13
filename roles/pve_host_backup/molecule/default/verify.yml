@@ -1,0 +1,331 @@
+---
+- name: Verify
+  hosts: all
+  tasks:
+    - name: Inspect PVE host backup files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /usr/local/sbin/pve-host-backup
+        - /etc/pve-host-backup/credentials.json
+        - /etc/systemd/system/pve-host-backup.service
+        - /etc/systemd/system/pve-host-backup.timer
+      register: pve_host_backup_files
+
+    - name: Verify PVE host backup files and modes
+      ansible.builtin.assert:
+        that:
+          - pve_host_backup_files.results | map(attribute='stat.exists') | min
+          - pve_host_backup_files.results[0].stat.mode == '0700'
+          - pve_host_backup_files.results[1].stat.mode == '0600'
+          - pve_host_backup_files.results[2].stat.mode == '0644'
+          - pve_host_backup_files.results[3].stat.mode == '0644'
+
+    - name: Check PVE host backup shell syntax
+      ansible.builtin.command:
+        cmd: bash -n /usr/local/sbin/pve-host-backup
+      changed_when: false
+
+    - name: Check PVE host backup systemd unit syntax
+      ansible.builtin.command:
+        argv:
+          - systemd-analyze
+          - verify
+          - /etc/systemd/system/pve-host-backup.service
+          - /etc/systemd/system/pve-host-backup.timer
+      changed_when: false
+
+    - name: Read generated non-secret files
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      loop:
+        - /usr/local/sbin/pve-host-backup
+        - /etc/systemd/system/pve-host-backup.service
+        - /etc/systemd/system/pve-host-backup.timer
+      register: pve_host_backup_generated_files
+
+    - name: Verify generated backup configuration
+      ansible.builtin.assert:
+        that:
+          - >-
+            'molecule-token-secret' not in
+            (pve_host_backup_generated_files.results
+             | map(attribute='content') | map('b64decode') | join('\n'))
+          - >-
+            'molecule-key-passphrase' not in
+            (pve_host_backup_generated_files.results
+             | map(attribute='content') | map('b64decode') | join('\n'))
+          - >-
+            'LoadCredential=pbs-credentials:' in
+            (pve_host_backup_generated_files.results[1].content | b64decode)
+          - >-
+            'RuntimeDirectory=pve-host-backup' in
+            (pve_host_backup_generated_files.results[1].content | b64decode)
+          - >-
+            'TimeoutStartSec=6h' in
+            (pve_host_backup_generated_files.results[1].content | b64decode)
+          - >-
+            '${CREDENTIALS_DIRECTORY}/pbs-credentials' in
+            (pve_host_backup_generated_files.results[0].content | b64decode)
+          - >-
+            '/root/.forward' in
+            (pve_host_backup_generated_files.results[0].content | b64decode)
+          - >-
+            'OnCalendar=2099-01-01 00:00:00' in
+            (pve_host_backup_generated_files.results[2].content | b64decode)
+
+    - name: Inspect PVE host backup timer state
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-enabled
+          - pve-host-backup.timer
+      changed_when: false
+
+    - name: Create test systemd credential directory
+      ansible.builtin.file:
+        path: /run/pve-host-backup-test-credentials
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Populate test systemd credential directory
+      ansible.builtin.copy:
+        src: /etc/pve-host-backup/credentials.json
+        dest: /run/pve-host-backup-test-credentials/pbs-credentials
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0400"
+      no_log: true
+
+    - name: Create test PVE host backup runtime directory
+      ansible.builtin.file:
+        path: /run/pve-host-backup
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Start fake PVE cluster service
+      ansible.builtin.systemd_service:
+        name: pve-cluster.service
+        state: started
+
+    - name: Run PVE host backup script with mocked client
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-host-backup
+      environment:
+        CREDENTIALS_DIRECTORY: /run/pve-host-backup-test-credentials
+      changed_when: true
+
+    - name: Remove test systemd credential directory
+      ansible.builtin.file:
+        path: /run/pve-host-backup-test-credentials
+        state: absent
+      no_log: true
+
+    - name: Check PVE host backup runtime cleanup
+      ansible.builtin.command:
+        argv:
+          - find
+          - /run/pve-host-backup
+          - -mindepth
+          - "1"
+          - -maxdepth
+          - "1"
+          - -type
+          - d
+          - -print
+          - -quit
+      register: pve_host_backup_runtime_directories
+      changed_when: false
+
+    - name: Verify PVE host backup runtime cleanup
+      ansible.builtin.assert:
+        that:
+          - pve_host_backup_runtime_directories.stdout | length == 0
+
+    - name: Read mocked PVE host backup arguments
+      ansible.builtin.slurp:
+        src: /run/pve-host-backup-test-arguments
+      register: pve_host_backup_mock_arguments
+
+    - name: Verify PVE host backup client arguments
+      ansible.builtin.assert:
+        that:
+          - >-
+            'pve.pxar:/etc/pve' in
+            (pve_host_backup_mock_arguments.content | b64decode)
+          - >-
+            '--backup-id\nmolecule' in
+            (pve_host_backup_mock_arguments.content | b64decode)
+          - >-
+            '--exclude\n/pve-host-backup/**' in
+            (pve_host_backup_mock_arguments.content | b64decode)
+
+    - name: Initialize unsafe archive validation result
+      ansible.builtin.set_fact:
+        pve_host_backup_unsafe_archive_rejected: false
+
+    - name: Verify unsafe archive sources are rejected
+      block:
+        - name: Attempt configuration with an unsafe archive source
+          ansible.builtin.include_role:
+            name: pve_host_backup
+          vars:
+            pve_host_backup_enabled: true
+            pve_host_backup_manage_packages: false
+            pve_host_backup_manage_timer: false
+            pve_host_backup_validate_encryption_key: false
+            pve_host_backup_require_quorum: false
+            pve_host_backup_repository: >-
+              backup@pbs!molecule@pbs.example.test:8007:data3
+            pve_host_backup_fingerprint: >-
+              00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff
+            pve_host_backup_namespace: pve-hosts/molecule
+            pve_host_backup_id: molecule
+            pve_host_backup_token_secret: molecule-token-secret
+            pve_host_backup_encryption_key: >-
+              {"kdf":null,"created":1,"modified":1,"data":"test"}
+            pve_host_backup_encryption_passphrase: molecule-key-passphrase
+            pve_host_backup_archives:
+              - name: unsafe
+                path: /var
+                max_bytes: 1073741824
+
+        - name: Fail when unsafe archive source was accepted
+          ansible.builtin.fail:
+            msg: Unsafe PVE host backup archive source was accepted
+      rescue:
+        - name: Record rejected unsafe archive source
+          ansible.builtin.set_fact:
+            pve_host_backup_unsafe_archive_rejected: true
+
+    - name: Confirm unsafe archive source was rejected
+      ansible.builtin.assert:
+        that:
+          - pve_host_backup_unsafe_archive_rejected
+
+    - name: Initialize unsafe purge validation result
+      ansible.builtin.set_fact:
+        pve_host_backup_unsafe_purge_rejected: false
+
+    - name: Verify unsafe purge paths are rejected
+      block:
+        - name: Attempt purge with an unsafe configuration path
+          ansible.builtin.include_role:
+            name: pve_host_backup
+          vars:
+            pve_host_backup_enabled: false
+            pve_host_backup_purge: true
+            pve_host_backup_config_dir: /etc
+
+        - name: Fail when unsafe purge path was accepted
+          ansible.builtin.fail:
+            msg: Unsafe PVE host backup purge path was accepted
+      rescue:
+        - name: Record rejected unsafe purge path
+          ansible.builtin.set_fact:
+            pve_host_backup_unsafe_purge_rejected: true
+
+    - name: Confirm unsafe purge path was rejected
+      ansible.builtin.assert:
+        that:
+          - pve_host_backup_unsafe_purge_rejected
+
+    - name: Initialize unsafe exclusion validation result
+      ansible.builtin.set_fact:
+        pve_host_backup_unsafe_exclusion_rejected: false
+
+    - name: Verify unsafe exclusions are rejected
+      block:
+        - name: Attempt configuration with a blanket exclusion
+          ansible.builtin.include_role:
+            name: pve_host_backup
+          vars:
+            pve_host_backup_enabled: true
+            pve_host_backup_manage_packages: false
+            pve_host_backup_manage_timer: false
+            pve_host_backup_validate_encryption_key: false
+            pve_host_backup_require_quorum: false
+            pve_host_backup_repository: >-
+              backup@pbs!molecule@pbs.example.test:8007:data3
+            pve_host_backup_fingerprint: >-
+              00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff
+            pve_host_backup_namespace: pve-hosts/molecule
+            pve_host_backup_id: molecule
+            pve_host_backup_token_secret: molecule-token-secret
+            pve_host_backup_encryption_key: >-
+              {"kdf":null,"created":1,"modified":1,"data":"test"}
+            pve_host_backup_encryption_passphrase: molecule-key-passphrase
+            pve_host_backup_excludes:
+              - /pve/**
+              - /pve-host-backup/**
+              - "**"
+
+        - name: Fail when unsafe exclusion was accepted
+          ansible.builtin.fail:
+            msg: Unsafe PVE host backup exclusion was accepted
+      rescue:
+        - name: Record rejected unsafe exclusion
+          ansible.builtin.set_fact:
+            pve_host_backup_unsafe_exclusion_rejected: true
+
+    - name: Confirm unsafe exclusion was rejected
+      ansible.builtin.assert:
+        that:
+          - pve_host_backup_unsafe_exclusion_rejected
+
+    - name: Replace service with an active purge fixture
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=Active PVE host backup purge fixture
+
+          [Service]
+          Type=simple
+          ExecStart=/bin/sleep infinity
+        dest: /etc/systemd/system/pve-host-backup.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Start active PVE host backup purge fixture
+      ansible.builtin.systemd_service:
+        name: pve-host-backup.service
+        daemon_reload: true
+        state: started
+
+    - name: Check active PVE host backup purge fixture
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - pve-host-backup.service
+      changed_when: false
+
+    - name: Purge PVE host backup deployment
+      ansible.builtin.include_role:
+        name: pve_host_backup
+      vars:
+        pve_host_backup_enabled: false
+        pve_host_backup_purge: true
+
+    - name: Inspect purged PVE host backup files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /usr/local/sbin/pve-host-backup
+        - /etc/pve-host-backup
+        - /etc/systemd/system/pve-host-backup.service
+        - /etc/systemd/system/pve-host-backup.timer
+      register: pve_host_backup_purged_files
+
+    - name: Verify PVE host backup deployment was purged
+      ansible.builtin.assert:
+        that:
+          - not (pve_host_backup_purged_files.results
+                 | map(attribute='stat.exists') | max)

@@ -94,6 +94,8 @@
       tags: [smart]
     - role: vzdump
       tags: [vzdump]
+    - role: pve_host_backup
+      tags: [host_backup]
   vars:
     smartmon_configuration_lines:
       - >-

@@ -1,0 +1,211 @@
+#!/bin/bash
+# Managed by Ansible role pve_host_backup.
+
+set -euo pipefail
+
+readonly REPOSITORY={{ pve_host_backup_repository | quote }}
+readonly NAMESPACE={{ pve_host_backup_namespace | quote }}
+readonly BACKUP_ID={{ pve_host_backup_id | quote }}
+readonly LOCK_PATH={{ pve_host_backup_lock_path | quote }}
+readonly STAGING_PARENT={{ pve_host_backup_staging_parent | quote }}
+readonly REQUIRE_QUORUM={{ pve_host_backup_require_quorum | ternary('true', 'false') }}
+
+CREDENTIAL_WORK_DIR=""
+STAGING_DIR=""
+
+log() {
+    printf '%s\n' "pve-host-backup: $*"
+}
+
+cleanup() {
+    if [[ -n "$CREDENTIAL_WORK_DIR" && -d "$CREDENTIAL_WORK_DIR" ]]; then
+        rm -rf -- "$CREDENTIAL_WORK_DIR"
+    fi
+    if [[ -n "$STAGING_DIR" && -d "$STAGING_DIR" ]]; then
+        rm -rf -- "$STAGING_DIR"
+    fi
+}
+trap cleanup EXIT
+
+exec 9>"$LOCK_PATH"
+if ! flock --exclusive --nonblock 9; then
+    log "ERROR: another host backup is still running"
+    exit 1
+fi
+
+if [[ -z "${CREDENTIALS_DIRECTORY:-}" ]]; then
+    log "ERROR: systemd credential directory is unavailable"
+    exit 1
+fi
+readonly PBS_CREDENTIAL_BUNDLE="${CREDENTIALS_DIRECTORY}/pbs-credentials"
+[[ -r "$PBS_CREDENTIAL_BUNDLE" ]] || {
+    log "ERROR: required backup credentials are unavailable"
+    exit 1
+}
+
+[[ -d "$STAGING_PARENT" && ! -L "$STAGING_PARENT" ]] || {
+    log "ERROR: private runtime directory is unavailable"
+    exit 1
+}
+CREDENTIAL_WORK_DIR=$(mktemp --directory --tmpdir="$STAGING_PARENT" \
+    credentials.XXXXXX)
+chmod 0700 "$CREDENTIAL_WORK_DIR"
+readonly PBS_TOKEN_FILE="${CREDENTIAL_WORK_DIR}/pbs-token"
+readonly PBS_KEY_FILE="${CREDENTIAL_WORK_DIR}/pbs-key"
+if ! jq --exit-status --join-output \
+    '.token | select(type == "string" and length > 0)' \
+    "$PBS_CREDENTIAL_BUNDLE" >"$PBS_TOKEN_FILE"; then
+    log "ERROR: backup token credential is invalid"
+    exit 1
+fi
+if ! jq --exit-status --compact-output \
+    '.key | select(type == "object")' \
+    "$PBS_CREDENTIAL_BUNDLE" >"$PBS_KEY_FILE"; then
+    log "ERROR: encryption-key credential is invalid"
+    exit 1
+fi
+chmod 0600 "$PBS_TOKEN_FILE" "$PBS_KEY_FILE"
+export PBS_PASSWORD_FILE="$PBS_TOKEN_FILE"
+readonly PBS_KEY_PASSWORD_FILE="${CREDENTIAL_WORK_DIR}/encryption-passphrase"
+if ! jq --exit-status --join-output \
+    '.passphrase | select(type == "string")' \
+    "$PBS_CREDENTIAL_BUNDLE" >"$PBS_KEY_PASSWORD_FILE"; then
+    log "ERROR: encryption-key passphrase credential is invalid"
+    exit 1
+fi
+if [[ -s "$PBS_KEY_PASSWORD_FILE" ]]; then
+    chmod 0600 "$PBS_KEY_PASSWORD_FILE"
+    export PBS_ENCRYPTION_PASSWORD_FILE="$PBS_KEY_PASSWORD_FILE"
+else
+    rm -f -- "$PBS_KEY_PASSWORD_FILE"
+fi
+proxmox-backup-client key show "$PBS_KEY_FILE" >/dev/null
+
+systemctl is-active --quiet pve-cluster.service || {
+    log "ERROR: pve-cluster.service is not active"
+    exit 1
+}
+if $REQUIRE_QUORUM && ! pvecm status | grep -Eq '^Quorate:[[:space:]]+Yes$'; then
+    log "ERROR: cluster is not quorate"
+    exit 1
+fi
+
+{% for archive in pve_host_backup_archives %}
+readonly SOURCE_{{ loop.index }}={{ archive.path | quote }}
+[[ -d "$SOURCE_{{ loop.index }}" && ! -L "$SOURCE_{{ loop.index }}" ]] || {
+    log "ERROR: archive source is not a trusted directory: $SOURCE_{{ loop.index }}"
+    exit 1
+}
+findmnt -T "$SOURCE_{{ loop.index }}" >/dev/null || {
+    log "ERROR: archive source is not on a mounted filesystem: $SOURCE_{{ loop.index }}"
+    exit 1
+}
+SOURCE_SIZE=$(du --apparent-size --block-size=1 --one-file-system --summarize \
+    "$SOURCE_{{ loop.index }}" | cut -f1)
+if (( SOURCE_SIZE > {{ archive.max_bytes }} )); then
+    log "ERROR: archive source exceeds configured size limit: $SOURCE_{{ loop.index }}"
+    exit 1
+fi
+{% endfor %}
+
+STAGING_DIR=$(mktemp --directory --tmpdir="$STAGING_PARENT" recovery.XXXXXX)
+chmod 0700 "$STAGING_DIR"
+
+{% for selected_file in pve_host_backup_selected_root_files %}
+if [[ -f {{ selected_file | quote }} && ! -L {{ selected_file | quote }} ]]; then
+    install -D --preserve-timestamps --mode="$(stat -c '%a' {{ selected_file | quote }})" \
+        {{ selected_file | quote }} \
+        "${STAGING_DIR}/selected-root{{ selected_file }}"
+fi
+{% endfor %}
+
+capture_required() {
+    local output=$1
+    shift
+    if ! "$@" >"${STAGING_DIR}/${output}" 2>&1; then
+        log "ERROR: recovery capture failed: ${output}"
+        return 1
+    fi
+}
+
+capture_optional() {
+    local output=$1
+    shift
+    if ! "$@" >"${STAGING_DIR}/${output}" 2>&1; then
+        printf '%s\n' "Optional command unavailable or failed: $*" \
+            >>"${STAGING_DIR}/${output}"
+    fi
+}
+
+{
+    printf 'captured_utc=%s\n' "$(date --utc --iso-8601=seconds)"
+    printf 'hostname=%s\n' "$(hostname --fqdn)"
+} >"${STAGING_DIR}/capture.txt"
+
+capture_required pveversion.txt pveversion -v
+capture_required uname.txt uname -a
+capture_required packages.txt dpkg-query -W -f='${binary:Package}\t${Version}\n'
+capture_required manual-packages.txt apt-mark showmanual
+capture_optional package-verification.txt dpkg -V
+capture_required ip-link.json ip -details -json link
+capture_required ip-address.json ip -details -json address
+capture_required ip-route.json ip -json route
+capture_optional bridge-link.json bridge -json link
+capture_required pvecm-status.txt pvecm status
+capture_required pvecm-nodes.txt pvecm nodes
+capture_required qm-list.txt qm list
+capture_required pct-list.txt pct list
+capture_required pvesm-status.txt pvesm status
+capture_required pvesr-status.txt pvesr status
+capture_required zpool-status.txt zpool status -P
+capture_required zpool-properties.txt zpool get all
+capture_required zfs-list.txt zfs list -t all
+capture_required zfs-properties.txt zfs get all
+capture_required zdb-config.txt zdb -C
+capture_required lsblk.json lsblk --json --output-all
+capture_optional blkid.txt blkid
+capture_required findmnt.json findmnt --json
+capture_required pci.txt lspci -Dnnk
+capture_required systemd-units.txt systemctl list-units --all --no-pager
+capture_required systemd-unit-files.txt systemctl list-unit-files --no-pager
+capture_required systemd-timers.txt systemctl list-timers --all --no-pager
+capture_optional proxmox-boot.txt proxmox-boot-tool status
+capture_optional efibootmgr.txt efibootmgr -v
+
+find /dev/disk/by-id -maxdepth 1 -type l \
+    -printf '%p -> %l\n' | sort >"${STAGING_DIR}/disk-by-id.txt"
+
+sqlite3 /var/lib/pve-cluster/config.db \
+    ".backup '${STAGING_DIR}/pmxcfs-config.db'"
+INTEGRITY=$(sqlite3 "${STAGING_DIR}/pmxcfs-config.db" \
+    'PRAGMA integrity_check;')
+if [[ "$INTEGRITY" != "ok" ]]; then
+    log "ERROR: pmxcfs database integrity check failed"
+    exit 1
+fi
+printf '%s\n' "$INTEGRITY" >"${STAGING_DIR}/pmxcfs-integrity.txt"
+
+(
+    cd "$STAGING_DIR"
+    find . -type f ! -name SHA256SUMS -print0 \
+        | sort -z | xargs -0 sha256sum >SHA256SUMS
+)
+
+BACKUP_ARGS=(
+    backup
+{% for archive in pve_host_backup_archives %}
+    {{ (archive.name ~ '.pxar:' ~ archive.path) | quote }}
+{% endfor %}
+    "recovery.pxar:${STAGING_DIR}"
+    --backup-type host
+    --backup-id "$BACKUP_ID"
+    --ns "$NAMESPACE"
+    --repository "$REPOSITORY"
+    --keyfile "$PBS_KEY_FILE"
+{% for exclude in pve_host_backup_excludes %}
+    --exclude {{ exclude | quote }}
+{% endfor %}
+)
+
+proxmox-backup-client "${BACKUP_ARGS[@]}"
+log "backup completed successfully"

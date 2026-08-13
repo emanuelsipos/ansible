@@ -1,0 +1,141 @@
+---
+- name: Prepare
+  hosts: all
+  tasks:
+    - name: Install PVE host backup test dependencies
+      ansible.builtin.apt:
+        name:
+          - iproute2
+          - jq
+          - pciutils
+          - sqlite3
+          - util-linux
+        state: present
+        update_cache: true
+
+    - name: Create test source directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /etc/pve
+        - /opt/test-tool
+
+    - name: Create fake pmxcfs configuration
+      ansible.builtin.copy:
+        content: "test"
+        dest: /etc/pve/test.conf
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Create selected root-owned configuration
+      ansible.builtin.copy:
+        content: "root@example.test"
+        dest: /root/.forward
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Create fake PVE cluster service for unit validation
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=Fake PVE cluster service for Molecule
+
+          [Service]
+          Type=oneshot
+          ExecStart=/bin/true
+          RemainAfterExit=yes
+        dest: /etc/systemd/system/pve-cluster.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Create fake pmxcfs database directory
+      ansible.builtin.file:
+        path: /var/lib/pve-cluster
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Create fake pmxcfs database
+      ansible.builtin.command:
+        argv:
+          - sqlite3
+          - /var/lib/pve-cluster/config.db
+          - CREATE TABLE test (value TEXT); INSERT INTO test VALUES ('ok');
+      args:
+        creates: /var/lib/pve-cluster/config.db
+
+    - name: Create disk inventory directory
+      ansible.builtin.file:
+        path: /dev/disk/by-id
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install fake PVE inventory commands
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          if [ "$(basename "$0")" = pvecm ] && [ "${1:-}" = status ]; then
+              printf '%s\n' 'Quorate: Yes'
+          else
+              printf '%s\n' "mock $(basename "$0") $*"
+          fi
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - pct
+        - pvecm
+        - pvesm
+        - pvesr
+        - pveversion
+        - qm
+        - zdb
+        - zfs
+        - zpool
+
+    - name: Install fake Proxmox Backup Client
+      ansible.builtin.copy:
+        content: |
+          #!/bin/bash
+          set -euo pipefail
+
+          if [[ "${1:-}" == key && "${2:-}" == show ]]; then
+              jq --exit-status '.data == "test"' "$3" >/dev/null
+              exit 0
+          fi
+
+          [[ "${1:-}" == backup ]]
+          [[ "$(<"$PBS_PASSWORD_FILE")" == molecule-token-secret ]]
+          [[ "$(<"$PBS_ENCRYPTION_PASSWORD_FILE")" == molecule-key-passphrase ]]
+
+          RECOVERY_DIR=""
+          for arg in "$@"; do
+              case "$arg" in
+                  recovery.pxar:*) RECOVERY_DIR=${arg#recovery.pxar:} ;;
+              esac
+          done
+          [[ -n "$RECOVERY_DIR" ]]
+          sqlite3 "${RECOVERY_DIR}/pmxcfs-config.db" \
+              'PRAGMA integrity_check;' | grep -Fx ok
+          (
+              cd "$RECOVERY_DIR"
+              sha256sum --check SHA256SUMS
+          )
+          grep -Fx root@example.test \
+              "${RECOVERY_DIR}/selected-root/root/.forward"
+          printf '%s\n' "$@" > /run/pve-host-backup-test-arguments
+        dest: /usr/local/bin/proxmox-backup-client
+        owner: root
+        group: root
+        mode: "0755"

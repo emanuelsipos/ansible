@@ -1,0 +1,21 @@
+[Unit]
+Description=Encrypted PVE host configuration backup to PBS
+Documentation=https://pbs.proxmox.com/docs/backup-client.html
+Wants=network-online.target
+After=network-online.target pve-cluster.service
+Requires=pve-cluster.service
+
+[Service]
+Type=oneshot
+ExecStart={{ pve_host_backup_script_path }}
+LoadCredential=pbs-credentials:{{ pve_host_backup_credential_path }}
+Environment="PBS_FINGERPRINT={{ pve_host_backup_fingerprint }}"
+TimeoutStartSec={{ pve_host_backup_timeout_start_sec }}
+TimeoutStopSec=5min
+RuntimeDirectory=pve-host-backup
+RuntimeDirectoryMode=0700
+UMask=0077
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=read-only
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK

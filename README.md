@@ -6,7 +6,8 @@ Production inventory and credentials are managed in Semaphore and are not stored
 
 ## Playbooks
 
-- `all-hosts`: unattended upgrades, log retention, zsh, Docker, host tuning, and backup tooling
+- `all-hosts`: unattended upgrades, log retention, zsh, Docker, host tuning,
+  encrypted PVE host backups, and backup tooling
 - `beszel`: Beszel agent installation and configuration
 - `komodo`: Komodo periphery and server configuration
 - `tailscale`: Tailscale installation and enrollment
@@ -27,6 +28,10 @@ Attach one variable group to the templates that run these playbooks.
 | `TAILSCALE_AUTHKEY` | Secrets → Environment variables | `tailscale` |
 | `agent_public_key` | Variables → Extra variables | `beszel` |
 | `komodo_core_public_key` | Variables → Extra variables | `komodo` |
+| `pve_host_backup_*` public settings | Variables → Extra variables or inventory | `all-hosts` |
+| `pve_host_backup_token_secret` | Secrets → Extra variables or inventory | `all-hosts` |
+| `pve_host_backup_encryption_key` | Secrets → Extra variables or inventory | `all-hosts` |
+| `pve_host_backup_encryption_passphrase` | Secrets → Extra variables or inventory | `all-hosts` |
 
 Production inventory is stored in Semaphore. The inventory must provide the
 groups shown in [`hosts.example`](hosts.example); templates may limit runs to a
@@ -43,6 +48,11 @@ Each nested playbook directory links `group_vars` to the canonical repository
 root directory. Semaphore installs static inventories beside the selected
 playbook, so these links keep the same group variables available in Semaphore
 and in local runs without maintaining duplicate variable files.
+
+The `pve_host_backup` role is opt-in and fails closed when enabled without its
+per-node PBS token, encryption key, repository, namespace, and fingerprint.
+See [`roles/pve_host_backup/README.md`](roles/pve_host_backup/README.md) before
+deploying it.
 
 For local use, copy `hosts.example` to `hosts`, replace the example hosts, install the requirements for the playbook being run, and provide the same variables through your preferred secret store.
 

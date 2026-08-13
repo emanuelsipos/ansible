@@ -1,0 +1,336 @@
+---
+- name: Validate PVE host backup lifecycle settings
+  ansible.builtin.assert:
+    that:
+      - pve_host_backup_enabled is boolean
+      - pve_host_backup_purge is boolean
+      - not (pve_host_backup_enabled and pve_host_backup_purge)
+    quiet: true
+    fail_msg: Enable and purge are mutually exclusive
+  tags: [pve_host_backup]
+
+- name: Validate PVE host backup managed paths
+  ansible.builtin.assert:
+    that:
+      - pve_host_backup_config_dir == '/etc/pve-host-backup'
+      - >-
+        pve_host_backup_credential_path
+        == pve_host_backup_config_dir ~ '/credentials.json'
+      - pve_host_backup_script_path == '/usr/local/sbin/pve-host-backup'
+      - pve_host_backup_lock_path == '/run/pve-host-backup/backup.lock'
+      - pve_host_backup_staging_parent == '/run/pve-host-backup'
+    quiet: true
+    fail_msg: Refusing unsafe PVE host backup managed paths
+  when: pve_host_backup_enabled | bool or pve_host_backup_purge | bool
+  tags: [pve_host_backup]
+
+- name: Inspect installed PVE host backup timer
+  ansible.builtin.stat:
+    path: /etc/systemd/system/pve-host-backup.timer
+  register: pve_host_backup_installed_timer
+  when: pve_host_backup_purge | bool
+  tags: [pve_host_backup]
+
+- name: Inspect installed PVE host backup service
+  ansible.builtin.stat:
+    path: /etc/systemd/system/pve-host-backup.service
+  register: pve_host_backup_installed_service
+  when: pve_host_backup_purge | bool
+  tags: [pve_host_backup]
+
+- name: Disable PVE host backup
+  when: pve_host_backup_purge | bool
+  tags: [pve_host_backup]
+  block:
+    - name: Stop and disable installed PVE host backup timer
+      ansible.builtin.systemd_service:
+        name: pve-host-backup.timer
+        enabled: false
+        state: stopped
+      when: pve_host_backup_installed_timer.stat.exists
+
+    - name: Stop installed PVE host backup service
+      ansible.builtin.systemd_service:
+        name: pve-host-backup.service
+        state: stopped
+      when: pve_host_backup_installed_service.stat.exists
+
+    - name: Remove PVE host backup credentials and configuration
+      ansible.builtin.file:
+        path: /etc/pve-host-backup
+        state: absent
+
+    - name: Remove PVE host backup files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /usr/local/sbin/pve-host-backup
+        - /etc/systemd/system/pve-host-backup.service
+        - /etc/systemd/system/pve-host-backup.timer
+      notify: Reload systemd for PVE host backup
+
+    - name: Apply PVE host backup unit removal
+      ansible.builtin.meta: flush_handlers
+
+- name: Configure PVE host backup
+  when: pve_host_backup_enabled | bool
+  tags: [pve_host_backup]
+  block:
+    - name: Validate PVE host backup configuration
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.os_family == 'Debian'
+          - pve_host_backup_repository is string
+          - >-
+            pve_host_backup_repository is match(
+              '^[^@\s:]+@[^!@\s:]+![^@\s:]+@'
+              ~ '(\[[0-9A-Fa-f:]+\]|[A-Za-z0-9.-]+)'
+              ~ '(:[0-9]{1,5})?:[A-Za-z0-9_.-]+$'
+            )
+          - not pve_host_backup_repository is search('[\r\n]')
+          - pve_host_backup_fingerprint is string
+          - >-
+            pve_host_backup_fingerprint
+            is match('^([A-Fa-f0-9]{2}:){31}[A-Fa-f0-9]{2}$')
+          - pve_host_backup_namespace is string
+          - >-
+            pve_host_backup_namespace
+            is match('^[A-Za-z0-9][A-Za-z0-9_.-]*'
+                     ~ '(/[A-Za-z0-9][A-Za-z0-9_.-]*)*$')
+          - pve_host_backup_id is string
+          - pve_host_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+          - pve_host_backup_token_secret is string
+          - pve_host_backup_token_secret | length > 0
+          - not pve_host_backup_token_secret is search('[\r\n]')
+          - pve_host_backup_encryption_key is string
+          - pve_host_backup_encryption_key | length > 0
+          - (pve_host_backup_encryption_key | from_json) is mapping
+          - pve_host_backup_encryption_passphrase is string
+          - not pve_host_backup_encryption_passphrase is search('[\r\n]')
+          - pve_host_backup_require_quorum is boolean
+          - pve_host_backup_manage_packages is boolean
+          - pve_host_backup_manage_timer is boolean
+          - pve_host_backup_validate_encryption_key is boolean
+          - pve_host_backup_timeout_start_sec is string
+          - pve_host_backup_timeout_start_sec is match('^[1-9][0-9]*(s|m|min|h|d)$')
+          - pve_host_backup_timer_calendar is string
+          - pve_host_backup_timer_calendar | length > 0
+          - not pve_host_backup_timer_calendar is search('[\r\n]')
+          - pve_host_backup_timer_randomized_delay is string
+          - >-
+            pve_host_backup_timer_randomized_delay
+            is match('^[0-9]+(s|m|min|h|d|w)$')
+          - pve_host_backup_archives is sequence
+          - pve_host_backup_archives is not string
+          - pve_host_backup_archives | length == 4
+          - >-
+            pve_host_backup_archives | map(attribute='name') | list | sort
+            == ['etc', 'local', 'opt', 'pve']
+          - >-
+            pve_host_backup_archives | map(attribute='path') | list | sort
+            == ['/etc', '/etc/pve', '/opt', '/usr/local']
+          - >-
+            pve_host_backup_archives | map(attribute='name') | list | unique
+            | length == pve_host_backup_archives | length
+          - pve_host_backup_excludes is sequence
+          - pve_host_backup_excludes is not string
+          - >-
+            pve_host_backup_excludes | sort
+            == ['/pve-host-backup/**', '/pve/**']
+          - pve_host_backup_excludes | unique | length == 2
+          - pve_host_backup_selected_root_files is sequence
+          - pve_host_backup_selected_root_files is not string
+        quiet: true
+        fail_msg: Invalid or missing PVE host backup configuration
+      no_log: true
+
+    - name: Validate PVE host backup archives
+      ansible.builtin.assert:
+        that:
+          - item.name is defined
+          - item.name is string
+          - item.name is match('^[a-z][a-z0-9_-]*$')
+          - item.name != 'recovery'
+          - item.path is defined
+          - item.path is string
+          - item.path is match('^/[^\r\n]*[^/]$')
+          - not item.path is search('(^|/)\.\.?(?:/|$)')
+          - not item.path is search('//')
+          - item.path != '/'
+          - >-
+            item.name ~ ':' ~ item.path in [
+              'etc:/etc',
+              'local:/usr/local',
+              'opt:/opt',
+              'pve:/etc/pve'
+            ]
+          - item.max_bytes is defined
+          - item.max_bytes is integer
+          - item.max_bytes is not boolean
+          - item.max_bytes | int >= 1048576
+          - item.max_bytes | int <= 10737418240
+        quiet: true
+        fail_msg: Invalid PVE host backup archive definition
+      loop: "{{ pve_host_backup_archives }}"
+      loop_control:
+        label: "{{ item.name | default('invalid') }}"
+
+    - name: Validate PVE host backup exclusions
+      ansible.builtin.assert:
+        that:
+          - item is string
+          - item | length > 0
+          - not item is search('[\r\n]')
+          - not item is search('(^|/)\.\.?(?:/|$)')
+        quiet: true
+        fail_msg: Invalid PVE host backup exclusion pattern
+      loop: "{{ pve_host_backup_excludes }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Validate selected root-owned files
+      ansible.builtin.assert:
+        that:
+          - item is string
+          - >-
+            item in [
+              '/root/.forward',
+              '/root/.ssh/config',
+              '/root/.ssh/id_rsa.pub'
+            ]
+        quiet: true
+        fail_msg: Selected root-owned backup files must use the safe allowlist
+      loop: "{{ pve_host_backup_selected_root_files }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Install PVE host backup packages
+      ansible.builtin.apt:
+        name: "{{ pve_host_backup_packages }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      when: pve_host_backup_manage_packages | bool
+
+    - name: Create PVE host backup configuration directory
+      ansible.builtin.file:
+        path: "{{ pve_host_backup_config_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Stage and validate PVE host backup credentials
+      no_log: true
+      block:
+        - name: Stage PVE host backup encryption key
+          ansible.builtin.copy:
+            content: "{{ pve_host_backup_encryption_key }}"
+            dest: >-
+              {{ pve_host_backup_config_dir }}/.encryption-key.candidate
+            owner: root
+            group: root
+            mode: "0600"
+          changed_when: false
+
+        - name: Stage PVE host backup encryption passphrase
+          ansible.builtin.copy:
+            content: "{{ pve_host_backup_encryption_passphrase }}"
+            dest: >-
+              {{ pve_host_backup_config_dir
+                 }}/.encryption-passphrase.candidate
+            owner: root
+            group: root
+            mode: "0600"
+          when: pve_host_backup_encryption_passphrase | length > 0
+          changed_when: false
+
+        - name: Validate staged PVE host backup encryption key
+          ansible.builtin.command:
+            argv:
+              - proxmox-backup-client
+              - key
+              - show
+              - >-
+                {{ pve_host_backup_config_dir
+                   }}/.encryption-key.candidate
+          environment: >-
+            {{
+              (
+                pve_host_backup_encryption_passphrase | length > 0
+              ) | ternary(
+                {
+                  'PBS_ENCRYPTION_PASSWORD_FILE':
+                    pve_host_backup_config_dir
+                    ~ '/.encryption-passphrase.candidate'
+                },
+                {}
+              )
+            }}
+          changed_when: false
+          when: pve_host_backup_validate_encryption_key | bool
+
+        - name: Install PVE host backup credential bundle
+          ansible.builtin.copy:
+            content: >-
+              {{
+                {
+                  'token': pve_host_backup_token_secret,
+                  'key': pve_host_backup_encryption_key | from_json,
+                  'passphrase': pve_host_backup_encryption_passphrase
+                } | to_json
+              }}
+            dest: "{{ pve_host_backup_credential_path }}"
+            owner: root
+            group: root
+            mode: "0600"
+      always:
+        - name: Remove staged PVE host backup credentials
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - >-
+              {{ pve_host_backup_config_dir
+                 }}/.encryption-key.candidate
+            - >-
+              {{ pve_host_backup_config_dir
+                 }}/.encryption-passphrase.candidate
+          changed_when: false
+
+    - name: Install PVE host backup script
+      ansible.builtin.template:
+        src: pve-host-backup.sh.j2
+        dest: "{{ pve_host_backup_script_path }}"
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Install PVE host backup systemd service
+      ansible.builtin.template:
+        src: pve-host-backup.service.j2
+        dest: /etc/systemd/system/pve-host-backup.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd for PVE host backup
+
+    - name: Install PVE host backup systemd timer
+      ansible.builtin.template:
+        src: pve-host-backup.timer.j2
+        dest: /etc/systemd/system/pve-host-backup.timer
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd for PVE host backup
+
+    - name: Apply PVE host backup systemd units
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable PVE host backup timer
+      ansible.builtin.systemd_service:
+        name: pve-host-backup.timer
+        enabled: true
+        state: started
+      when: pve_host_backup_manage_timer | bool
