@@ -82,6 +82,20 @@
           - pve-host-backup.timer
       changed_when: false
 
+    - name: Inspect deployment credential staging directories
+      ansible.builtin.find:
+        paths: /etc/pve-host-backup
+        patterns: .credentials-*
+        file_type: directory
+        hidden: true
+        recurse: false
+      register: pve_host_backup_credential_staging_directories
+
+    - name: Verify deployment credential staging cleanup
+      ansible.builtin.assert:
+        that:
+          - pve_host_backup_credential_staging_directories.matched == 0
+
     - name: Create test systemd credential directory
       ansible.builtin.file:
         path: /run/pve-host-backup-test-credentials
@@ -165,6 +179,54 @@
           - >-
             '--exclude\n/pve-host-backup/**' in
             (pve_host_backup_mock_arguments.content | b64decode)
+
+    - name: Initialize rejected encryption key validation result
+      ansible.builtin.set_fact:
+        pve_host_backup_invalid_key_rejected: false
+
+    - name: Verify failed encryption key validation cleans staging files
+      block:
+        - name: Attempt configuration with an invalid encryption key
+          ansible.builtin.include_role:
+            name: pve_host_backup
+          vars:
+            pve_host_backup_enabled: true
+            pve_host_backup_manage_packages: false
+            pve_host_backup_manage_timer: false
+            pve_host_backup_require_quorum: false
+            pve_host_backup_repository: >-
+              backup@pbs!molecule@pbs.example.test:8007:data3
+            pve_host_backup_fingerprint: >-
+              00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff
+            pve_host_backup_namespace: pve-hosts/molecule
+            pve_host_backup_id: molecule
+            pve_host_backup_token_secret: molecule-token-secret
+            pve_host_backup_encryption_key: >-
+              {"kdf":null,"created":1,"modified":1,"data":"invalid"}
+            pve_host_backup_encryption_passphrase: molecule-key-passphrase
+
+        - name: Fail when invalid encryption key was accepted
+          ansible.builtin.fail:
+            msg: Invalid PVE host backup encryption key was accepted
+      rescue:
+        - name: Record rejected invalid encryption key
+          ansible.builtin.set_fact:
+            pve_host_backup_invalid_key_rejected: true
+
+    - name: Inspect credential staging after failed validation
+      ansible.builtin.find:
+        paths: /etc/pve-host-backup
+        patterns: .credentials-*
+        file_type: directory
+        hidden: true
+        recurse: false
+      register: pve_host_backup_failed_validation_staging_directories
+
+    - name: Verify failed validation cleaned credential staging
+      ansible.builtin.assert:
+        that:
+          - pve_host_backup_invalid_key_rejected
+          - pve_host_backup_failed_validation_staging_directories.matched == 0
 
     - name: Initialize unsafe archive validation result
       ansible.builtin.set_fact:

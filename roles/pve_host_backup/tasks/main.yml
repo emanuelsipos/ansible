@@ -224,11 +224,28 @@
     - name: Stage and validate PVE host backup credentials
       no_log: true
       block:
+        - name: Create PVE host backup credential staging directory
+          ansible.builtin.tempfile:
+            path: "{{ pve_host_backup_config_dir }}"
+            prefix: .credentials-
+            state: directory
+          register: pve_host_backup_credential_staging
+          changed_when: false
+
+        - name: Restrict PVE host backup credential staging directory
+          ansible.builtin.file:
+            path: "{{ pve_host_backup_credential_staging.path }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+          changed_when: false
+
         - name: Stage PVE host backup encryption key
           ansible.builtin.copy:
             content: "{{ pve_host_backup_encryption_key }}"
             dest: >-
-              {{ pve_host_backup_config_dir }}/.encryption-key.candidate
+              {{ pve_host_backup_credential_staging.path }}/encryption-key
             owner: root
             group: root
             mode: "0600"
@@ -238,8 +255,8 @@
           ansible.builtin.copy:
             content: "{{ pve_host_backup_encryption_passphrase }}"
             dest: >-
-              {{ pve_host_backup_config_dir
-                 }}/.encryption-passphrase.candidate
+              {{ pve_host_backup_credential_staging.path
+                 }}/encryption-passphrase
             owner: root
             group: root
             mode: "0600"
@@ -253,8 +270,8 @@
               - key
               - show
               - >-
-                {{ pve_host_backup_config_dir
-                   }}/.encryption-key.candidate
+                {{ pve_host_backup_credential_staging.path
+                   }}/encryption-key
           environment: >-
             {{
               (
@@ -262,8 +279,8 @@
               ) | ternary(
                 {
                   'PBS_ENCRYPTION_PASSWORD_FILE':
-                    pve_host_backup_config_dir
-                    ~ '/.encryption-passphrase.candidate'
+                    pve_host_backup_credential_staging.path
+                    ~ '/encryption-passphrase'
                 },
                 {}
               )
@@ -286,18 +303,14 @@
             group: root
             mode: "0600"
       always:
-        - name: Remove staged PVE host backup credentials
+        - name: Remove PVE host backup credential staging directory
           ansible.builtin.file:
-            path: "{{ item }}"
+            path: "{{ pve_host_backup_credential_staging.path }}"
             state: absent
-          loop:
-            - >-
-              {{ pve_host_backup_config_dir
-                 }}/.encryption-key.candidate
-            - >-
-              {{ pve_host_backup_config_dir
-                 }}/.encryption-passphrase.candidate
           changed_when: false
+          when:
+            - pve_host_backup_credential_staging is defined
+            - pve_host_backup_credential_staging.path is defined
 
     - name: Install PVE host backup script
       ansible.builtin.template:
