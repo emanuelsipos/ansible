@@ -81,6 +81,10 @@ The token, key, and optional passphrase are published atomically as one
 root-only credential bundle. systemd copies the bundle into its protected
 credential directory for each run; the backup script extracts short-lived
 credential files under its private runtime directory and removes them on exit.
+By default, deployment decrypt-tests the key with `key paperkey`; setting
+`pve_host_backup_validate_encryption_key: false` skips only that deployment
+check. Every backup run decrypt-tests the key, and both paths discard sensitive
+command output.
 
 ```yaml
 pve_host_backup_enabled: true

@@ -110,8 +110,12 @@
           #!/bin/bash
           set -euo pipefail
 
-          if [[ "${1:-}" == key && "${2:-}" == show ]]; then
+          if [[ "${1:-}" == key && "${2:-}" == paperkey ]]; then
               jq --exit-status '.data == "test"' "$3" >/dev/null
+              [[ "$(<"$PBS_ENCRYPTION_PASSWORD_FILE")" == molecule-key-passphrase ]]
+              printf '%s\n' paperkey >> /run/pve-host-backup-paperkey-invocations
+              printf '%s\n' MOLECULE_SENSITIVE_PAPERKEY_STDOUT
+              printf '%s\n' MOLECULE_SENSITIVE_PAPERKEY_STDERR >&2
               exit 0
           fi
 

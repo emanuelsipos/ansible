@@ -79,7 +79,11 @@ if [[ -s "$PBS_KEY_PASSWORD_FILE" ]]; then
 else
     rm -f -- "$PBS_KEY_PASSWORD_FILE"
 fi
-proxmox-backup-client key show "$PBS_KEY_FILE" >/dev/null
+if ! proxmox-backup-client key paperkey "$PBS_KEY_FILE" \
+    >/dev/null 2>&1; then
+    log "ERROR: encryption key or passphrase is invalid"
+    exit 1
+fi
 
 systemctl is-active --quiet pve-cluster.service || {
     log "ERROR: pve-cluster.service is not active"
