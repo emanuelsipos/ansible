@@ -11,7 +11,11 @@ node.
 
 ## Backup contents
 
-One timestamp-consistent PBS snapshot contains:
+Each run creates one PBS snapshot. Its archive sources are captured sequentially
+without a filesystem freeze, so the snapshot is not a point-in-time-consistent
+image across those sources.
+
+The snapshot contains:
 
 - `pve.pxar`: mounted `/etc/pve` configuration.
 - `etc.pxar`: local `/etc`, excluding the duplicate `pve` subtree and this
@@ -34,7 +38,12 @@ upload if a source unexpectedly grows past its limit. Archive roots are limited
 to the reviewed `/etc`, `/etc/pve`, `/usr/local`, and `/opt` paths so a variable
 override cannot capture PVE guest disks, dumps, or transient filesystems. PXAR
 skips descendant mountpoints by default; the role never enables the client
-options that cross them.
+options that cross them. Before collecting `pve.pxar`, the role requires
+`/etc/pve` itself to be a `fuse` mount sourced from `/dev/fuse`; a directory at
+that path without the live pmxcfs mount fails the run before the PBS client is
+called. The role repeats this check immediately before every upload attempt so
+a pmxcfs failure during recovery-data collection cannot produce a successful
+snapshot with an empty or stale `pve.pxar`.
 
 ## Explicit exclusions
 
@@ -56,22 +65,29 @@ covered by `etc.pxar`; custom monitoring, ZFS snapshot, Beszel, Periphery,
 Before enabling the role:
 
 1. Create one PBS user and API token per PVE node.
-2. Create a namespace such as `pve-hosts/io` or `pve-hosts/europa`.
-3. Grant only `DatastoreBackup` on that node's namespace.
+2. Use the datastore root namespace and back up with groups `host/io` and
+   `host/europa` (backup type `host`, one backup ID per node).
+3. Grant only `DatastoreBackup` at the datastore root to each node's separate
+   owner/token.
 4. Keep prune, verification, garbage collection, and datastore synchronization
    as PBS-side jobs using separate administrative identities.
 5. Generate one PBS client encryption key per node. Store a recovery copy and
    any passphrase in Vaultwarden and a separate offline location before
    deploying it to the node.
 
-The token can create and restore its owned backups but cannot prune or delete
-existing snapshots. A compromised node can still read its unattended key and
-token and can stop or flood future backups.
+Separate owners/tokens preserve PBS snapshot-group ownership isolation: each
+node can use and restore the groups it owns, but it cannot use the other node's
+existing group. Root-namespace placement has a broader group-creation scope
+than a per-node namespace, however: a token with root `DatastoreBackup` can
+create new root-namespace groups. Keep distinct identities, do not grant prune
+or delete privileges, and monitor for unexpected groups. A compromised node can
+still read its unattended key and token and can stop or flood future backups.
 
 For the current topology, target local datastore `data3` and retain the hourly
 PBS sync from `data3` to the Hexabyte S3 datastore. Do not rely on S3 as the
-only copy. Monitor sync freshness, verification failures, GC failures, missed
-host snapshots, and capacity on both datastores.
+only copy. Alert on failed `pve-host-backup.service` runs and on daily snapshot
+freshness, in addition to sync freshness, verification failures, GC failures,
+and capacity on both datastores.
 
 ## Variables
 
@@ -86,7 +102,8 @@ credential files under its private runtime directory and removes them on exit.
 pve_host_backup_enabled: true
 pve_host_backup_repository: "host-io@pbs!host-backup@pbs.example:8007:data3"
 pve_host_backup_fingerprint: "00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff"
-pve_host_backup_namespace: "pve-hosts/io"
+# Empty uses the datastore root and omits --ns from proxmox-backup-client.
+pve_host_backup_namespace: ""
 pve_host_backup_id: "io"
 pve_host_backup_token_secret: "SEMAPHORE_SECRET"
 pve_host_backup_encryption_key: "SEMAPHORE_SECRET_PBS_KEY_JSON"
@@ -94,11 +111,30 @@ pve_host_backup_encryption_passphrase: "SEMAPHORE_SECRET_IF_KEY_IS_PROTECTED"
 pve_host_backup_timer_calendar: "*-*-* 03:15:00"
 ```
 
+Set `pve_host_backup_namespace` to a nonempty safe path such as
+`pve-hosts/io` only when retaining an existing per-node namespace. Existing
+namespaced snapshots remain in place when switching this role to root; inspect
+and retain them under the PBS policy rather than treating this as a migration.
+
+Deployment validates the encryption key only as structurally valid JSON. The
+runtime `proxmox-backup-client key show` checks that the client can read that
+key file; it does not validate a protected-key passphrase. PBS 4.2.x has no
+supported noninteractive passphrase probe. After rotating a key or passphrase,
+run a successful backup and restore test before relying on the rotation.
+
 Use `03:45` for the second node. The timer adds up to ten minutes of randomized
 delay. A run is terminated after six hours by default; adjust
 `pve_host_backup_timeout_start_sec` only for a measured need. Set
 `pve_host_backup_require_quorum: false` only for a deliberately documented
 recovery or standalone test case.
+
+`pve_host_backup_upload_attempts` defaults to `3` and
+`pve_host_backup_upload_retry_delay` defaults to `5m`. Only the PBS upload is
+retried; local checks, quorum checks, locking, collection, and key handling are
+not retried. Attempts are limited to 1--5 and delays to 0--59 seconds or 0--5
+minutes. Ensure the service timeout remains appropriate for the backup duration
+and its configured retry budget. Set `pve_host_backup_manage_timer: false` to
+stop and disable the installed timer; `true` enables and starts it.
 
 ## Deployment and testing
 
@@ -112,7 +148,9 @@ journalctl -u pve-host-backup.service
 ```
 
 List the resulting snapshot, confirm client-side encryption, and restore every
-archive into an empty temporary directory. Validate the restored SQLite file:
+archive into an empty temporary directory. This successful backup and restore
+is also required after changing an encryption key or passphrase. Validate the
+restored SQLite file:
 
 ```bash
 sqlite3 ./pmxcfs-config.db 'PRAGMA integrity_check;'

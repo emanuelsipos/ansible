@@ -32,6 +32,14 @@
         group: root
         mode: "0600"
 
+    - name: Mark fake pmxcfs mount as available
+      ansible.builtin.file:
+        path: /run/pve-host-backup-test-pmxcfs-mounted
+        state: touch
+        owner: root
+        group: root
+        mode: "0600"
+
     - name: Create selected root-owned configuration
       ansible.builtin.copy:
         content: "root@example.test"
@@ -84,6 +92,10 @@
       ansible.builtin.copy:
         content: |
           #!/bin/sh
+          if [ "$(basename "$0")" = pveversion ] && \
+              [ "${PBS_BACKUP_TEST_DROP_PMXCFS_AFTER_PREFLIGHT:-}" = 1 ]; then
+              rm -f /run/pve-host-backup-test-pmxcfs-mounted
+          fi
           if [ "$(basename "$0")" = pvecm ] && [ "${1:-}" = status ]; then
               printf '%s\n' 'Quorate: Yes'
           else
@@ -104,6 +116,37 @@
         - zfs
         - zpool
 
+    - name: Install fake pmxcfs mount inspection commands
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          if [ "$(basename "$0")" = mountpoint ] && [ "${1:-}" = -q ] && \
+              [ "${2:-}" = /etc/pve ]; then
+              test -e /run/pve-host-backup-test-pmxcfs-mounted
+              exit $?
+          fi
+          if [ "$(basename "$0")" = findmnt ] && [ "${1:-}" = --json ] && \
+              [ "${2:-}" = --target ] && [ "${3:-}" = /etc/pve ]; then
+              if test -e /run/pve-host-backup-test-pmxcfs-mounted; then
+                  if test "${PBS_BACKUP_TEST_PMXCFS_IDENTITY:-}" = wrong; then
+                      printf '%s\n' '{"filesystems":[{"target":"/etc/pve","source":"/dev/other","fstype":"ext4"}]}'
+                  else
+                      printf '%s\n' '{"filesystems":[{"target":"/etc/pve","source":"/dev/fuse","fstype":"fuse"}]}'
+                  fi
+              else
+                  printf '%s\n' '{"filesystems":[]}'
+              fi
+              exit 0
+          fi
+          exec "/usr/bin/$(basename "$0")" "$@"
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - findmnt
+        - mountpoint
+
     - name: Install fake Proxmox Backup Client
       ansible.builtin.copy:
         content: |
@@ -116,8 +159,32 @@
           fi
 
           [[ "${1:-}" == backup ]]
-          [[ "$(<"$PBS_PASSWORD_FILE")" == molecule-token-secret ]]
-          [[ "$(<"$PBS_ENCRYPTION_PASSWORD_FILE")" == molecule-key-passphrase ]]
+          if [[ -n "${PBS_BACKUP_CLIENT_CALL_LOG:-}" ]]; then
+              printf '%s\n' "$*" >>"$PBS_BACKUP_CLIENT_CALL_LOG"
+          fi
+          if [[ -n "${PBS_BACKUP_CLIENT_ATTEMPT_LOG:-}" ]]; then
+              printf '%s\n' "$*" >>"$PBS_BACKUP_CLIENT_ATTEMPT_LOG"
+          fi
+          if [[ "$(<"$PBS_PASSWORD_FILE")" != molecule-token-secret ]]; then
+              exit 1
+          fi
+          if [[ -z "${PBS_ENCRYPTION_PASSWORD_FILE:-}" ]] || \
+              [[ "$(<"$PBS_ENCRYPTION_PASSWORD_FILE")" != molecule-key-passphrase ]]; then
+              exit 1
+          fi
+
+          if (( ${PBS_BACKUP_CLIENT_TRANSIENT_FAILURES:-0} > 0 )); then
+              STATE_FILE=${PBS_BACKUP_CLIENT_STATE_FILE:-/run/pve-host-backup-test-client-state}
+              ATTEMPT=0
+              if [[ -f "$STATE_FILE" ]]; then
+                  ATTEMPT=$(<"$STATE_FILE")
+              fi
+              ATTEMPT=$((ATTEMPT + 1))
+              printf '%s\n' "$ATTEMPT" >"$STATE_FILE"
+              if (( ATTEMPT <= PBS_BACKUP_CLIENT_TRANSIENT_FAILURES )); then
+                  exit 1
+              fi
+          fi
 
           RECOVERY_DIR=""
           for arg in "$@"; do

@@ -82,19 +82,97 @@
           - pve-host-backup.timer
       changed_when: false
 
-    - name: Inspect deployment credential staging directories
-      ansible.builtin.find:
-        paths: /etc/pve-host-backup
-        patterns: .credentials-*
-        file_type: directory
-        hidden: true
-        recurse: false
-      register: pve_host_backup_credential_staging_directories
+    - name: Inspect active PVE host backup timer state
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - pve-host-backup.timer
+      changed_when: false
 
-    - name: Verify deployment credential staging cleanup
+    - name: Disable installed PVE host backup timer
+      ansible.builtin.include_role:
+        name: pve_host_backup
+      vars:
+        pve_host_backup_enabled: true
+        pve_host_backup_manage_packages: false
+        pve_host_backup_manage_timer: false
+        pve_host_backup_require_quorum: false
+        pve_host_backup_upload_retry_delay: 0s
+        pve_host_backup_repository: >-
+          backup@pbs!molecule@pbs.example.test:8007:data3
+        pve_host_backup_fingerprint: >-
+          00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff
+        pve_host_backup_namespace: ""
+        pve_host_backup_id: molecule
+        pve_host_backup_token_secret: molecule-token-secret
+        pve_host_backup_encryption_key: >-
+          {"kdf":null,"created":1,"modified":1,"data":"test"}
+        pve_host_backup_encryption_passphrase: molecule-key-passphrase
+
+    - name: Inspect disabled PVE host backup timer state
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-enabled
+          - pve-host-backup.timer
+      register: pve_host_backup_disabled_timer
+      changed_when: false
+      failed_when: false
+
+    - name: Inspect stopped PVE host backup timer state
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - pve-host-backup.timer
+      register: pve_host_backup_stopped_timer
+      changed_when: false
+      failed_when: false
+
+    - name: Verify PVE host backup timer was disabled
       ansible.builtin.assert:
         that:
-          - pve_host_backup_credential_staging_directories.matched == 0
+          - pve_host_backup_disabled_timer.rc != 0
+          - pve_host_backup_disabled_timer.stdout == 'disabled'
+          - pve_host_backup_stopped_timer.rc != 0
+          - pve_host_backup_stopped_timer.stdout == 'inactive'
+
+    - name: Re-enable installed PVE host backup timer
+      ansible.builtin.include_role:
+        name: pve_host_backup
+      vars:
+        pve_host_backup_enabled: true
+        pve_host_backup_manage_packages: false
+        pve_host_backup_manage_timer: true
+        pve_host_backup_require_quorum: false
+        pve_host_backup_upload_retry_delay: 0s
+        pve_host_backup_repository: >-
+          backup@pbs!molecule@pbs.example.test:8007:data3
+        pve_host_backup_fingerprint: >-
+          00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff
+        pve_host_backup_namespace: ""
+        pve_host_backup_id: molecule
+        pve_host_backup_token_secret: molecule-token-secret
+        pve_host_backup_encryption_key: >-
+          {"kdf":null,"created":1,"modified":1,"data":"test"}
+        pve_host_backup_encryption_passphrase: molecule-key-passphrase
+
+    - name: Confirm PVE host backup timer was re-enabled
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-enabled
+          - pve-host-backup.timer
+      changed_when: false
+
+    - name: Confirm PVE host backup timer was restarted
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - pve-host-backup.timer
+      changed_when: false
 
     - name: Create test systemd credential directory
       ansible.builtin.file:
@@ -127,19 +205,38 @@
         name: pve-cluster.service
         state: started
 
+    - name: Remove prior mocked PVE host backup client state
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /run/pve-host-backup-test-arguments
+        - /run/pve-host-backup-test-attempts
+        - /run/pve-host-backup-test-client-state
+
     - name: Run PVE host backup script with mocked client
       ansible.builtin.command:
         argv:
           - /usr/local/sbin/pve-host-backup
       environment:
         CREDENTIALS_DIRECTORY: /run/pve-host-backup-test-credentials
+        PBS_BACKUP_CLIENT_ATTEMPT_LOG: /run/pve-host-backup-test-attempts
+        PBS_BACKUP_CLIENT_TRANSIENT_FAILURES: "1"
       changed_when: true
 
-    - name: Remove test systemd credential directory
-      ansible.builtin.file:
-        path: /run/pve-host-backup-test-credentials
-        state: absent
-      no_log: true
+    - name: Count mocked PVE host backup client attempts
+      ansible.builtin.command:
+        argv:
+          - wc
+          - -l
+          - /run/pve-host-backup-test-attempts
+      register: pve_host_backup_client_attempts
+      changed_when: false
+
+    - name: Verify transient backup failure was retried
+      ansible.builtin.assert:
+        that:
+          - pve_host_backup_client_attempts.stdout.split()[0] == '2'
 
     - name: Check PVE host backup runtime cleanup
       ansible.builtin.command:
@@ -179,54 +276,237 @@
           - >-
             '--exclude\n/pve-host-backup/**' in
             (pve_host_backup_mock_arguments.content | b64decode)
+          - >-
+            '--ns' not in
+            (pve_host_backup_mock_arguments.content | b64decode)
 
-    - name: Initialize rejected encryption key validation result
-      ansible.builtin.set_fact:
-        pve_host_backup_invalid_key_rejected: false
+    - name: Simulate an unavailable pmxcfs mount
+      ansible.builtin.file:
+        path: /run/pve-host-backup-test-pmxcfs-mounted
+        state: absent
 
-    - name: Verify failed encryption key validation cleans staging files
-      block:
-        - name: Attempt configuration with an invalid encryption key
-          ansible.builtin.include_role:
-            name: pve_host_backup
-          vars:
-            pve_host_backup_enabled: true
-            pve_host_backup_manage_packages: false
-            pve_host_backup_manage_timer: false
-            pve_host_backup_require_quorum: false
-            pve_host_backup_repository: >-
-              backup@pbs!molecule@pbs.example.test:8007:data3
-            pve_host_backup_fingerprint: >-
-              00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff
-            pve_host_backup_namespace: pve-hosts/molecule
-            pve_host_backup_id: molecule
-            pve_host_backup_token_secret: molecule-token-secret
-            pve_host_backup_encryption_key: >-
-              {"kdf":null,"created":1,"modified":1,"data":"invalid"}
-            pve_host_backup_encryption_passphrase: molecule-key-passphrase
+    - name: Remove prior pmxcfs failure client-attempt log
+      ansible.builtin.file:
+        path: /run/pve-host-backup-test-pmxcfs-attempts
+        state: absent
 
-        - name: Fail when invalid encryption key was accepted
-          ansible.builtin.fail:
-            msg: Invalid PVE host backup encryption key was accepted
-      rescue:
-        - name: Record rejected invalid encryption key
-          ansible.builtin.set_fact:
-            pve_host_backup_invalid_key_rejected: true
+    - name: Run PVE host backup without a pmxcfs mount
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-host-backup
+      environment:
+        CREDENTIALS_DIRECTORY: /run/pve-host-backup-test-credentials
+        PBS_BACKUP_CLIENT_CALL_LOG: /run/pve-host-backup-test-pmxcfs-attempts
+      register: pve_host_backup_missing_pmxcfs
+      changed_when: false
+      failed_when: false
 
-    - name: Inspect credential staging after failed validation
-      ansible.builtin.find:
-        paths: /etc/pve-host-backup
-        patterns: .credentials-*
-        file_type: directory
-        hidden: true
-        recurse: false
-      register: pve_host_backup_failed_validation_staging_directories
+    - name: Inspect backup client attempts without a pmxcfs mount
+      ansible.builtin.stat:
+        path: /run/pve-host-backup-test-pmxcfs-attempts
+      register: pve_host_backup_missing_pmxcfs_attempts
 
-    - name: Verify failed validation cleaned credential staging
+    - name: Verify missing pmxcfs mount prevented the backup client
       ansible.builtin.assert:
         that:
-          - pve_host_backup_invalid_key_rejected
-          - pve_host_backup_failed_validation_staging_directories.matched == 0
+          - pve_host_backup_missing_pmxcfs.rc != 0
+          - not pve_host_backup_missing_pmxcfs_attempts.stat.exists
+
+    - name: Restore fake pmxcfs mount marker
+      ansible.builtin.file:
+        path: /run/pve-host-backup-test-pmxcfs-mounted
+        state: touch
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Remove prior wrong-identity client-attempt log
+      ansible.builtin.file:
+        path: /run/pve-host-backup-test-pmxcfs-identity-attempts
+        state: absent
+
+    - name: Run PVE host backup with the wrong pmxcfs identity
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-host-backup
+      environment:
+        CREDENTIALS_DIRECTORY: /run/pve-host-backup-test-credentials
+        PBS_BACKUP_CLIENT_CALL_LOG: >-
+          /run/pve-host-backup-test-pmxcfs-identity-attempts
+        PBS_BACKUP_TEST_PMXCFS_IDENTITY: wrong
+      register: pve_host_backup_wrong_pmxcfs_identity
+      changed_when: false
+      failed_when: false
+
+    - name: Inspect backup client attempts with the wrong pmxcfs identity
+      ansible.builtin.stat:
+        path: /run/pve-host-backup-test-pmxcfs-identity-attempts
+      register: pve_host_backup_wrong_pmxcfs_identity_attempts
+
+    - name: Verify wrong pmxcfs identity prevented the backup client
+      ansible.builtin.assert:
+        that:
+          - pve_host_backup_wrong_pmxcfs_identity.rc != 0
+          - not pve_host_backup_wrong_pmxcfs_identity_attempts.stat.exists
+
+    - name: Remove prior mid-run pmxcfs client-attempt log
+      ansible.builtin.file:
+        path: /run/pve-host-backup-test-pmxcfs-mid-run-attempts
+        state: absent
+
+    - name: Run PVE host backup while pmxcfs disappears after preflight
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-host-backup
+      environment:
+        CREDENTIALS_DIRECTORY: /run/pve-host-backup-test-credentials
+        PBS_BACKUP_CLIENT_CALL_LOG: >-
+          /run/pve-host-backup-test-pmxcfs-mid-run-attempts
+        PBS_BACKUP_TEST_DROP_PMXCFS_AFTER_PREFLIGHT: "1"
+      register: pve_host_backup_lost_pmxcfs_mid_run
+      changed_when: false
+      failed_when: false
+
+    - name: Inspect backup client attempts after pmxcfs disappears
+      ansible.builtin.stat:
+        path: /run/pve-host-backup-test-pmxcfs-mid-run-attempts
+      register: pve_host_backup_lost_pmxcfs_mid_run_attempts
+
+    - name: Verify mid-run pmxcfs loss prevented the backup client
+      ansible.builtin.assert:
+        that:
+          - pve_host_backup_lost_pmxcfs_mid_run.rc != 0
+          - not pve_host_backup_lost_pmxcfs_mid_run_attempts.stat.exists
+
+    - name: Restore fake pmxcfs mount marker after mid-run loss
+      ansible.builtin.file:
+        path: /run/pve-host-backup-test-pmxcfs-mounted
+        state: touch
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Configure a non-root PVE host backup namespace
+      ansible.builtin.include_role:
+        name: pve_host_backup
+      vars:
+        pve_host_backup_enabled: true
+        pve_host_backup_manage_packages: false
+        pve_host_backup_manage_timer: false
+        pve_host_backup_require_quorum: false
+        pve_host_backup_upload_retry_delay: 0s
+        pve_host_backup_repository: >-
+          backup@pbs!molecule@pbs.example.test:8007:data3
+        pve_host_backup_fingerprint: >-
+          00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff
+        pve_host_backup_namespace: pve-hosts/molecule
+        pve_host_backup_id: molecule
+        pve_host_backup_token_secret: molecule-token-secret
+        pve_host_backup_encryption_key: >-
+          {"kdf":null,"created":1,"modified":1,"data":"test"}
+        pve_host_backup_encryption_passphrase: molecule-key-passphrase
+
+    - name: Run PVE host backup in a non-root namespace
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-host-backup
+      environment:
+        CREDENTIALS_DIRECTORY: /run/pve-host-backup-test-credentials
+      changed_when: true
+
+    - name: Read non-root namespace backup client arguments
+      ansible.builtin.slurp:
+        src: /run/pve-host-backup-test-arguments
+      register: pve_host_backup_namespaced_mock_arguments
+
+    - name: Verify non-root namespace backup client arguments
+      ansible.builtin.assert:
+        that:
+          - >-
+            '--ns\npve-hosts/molecule' in
+            (pve_host_backup_namespaced_mock_arguments.content | b64decode)
+
+    - name: Restore root PVE host backup namespace configuration
+      ansible.builtin.include_role:
+        name: pve_host_backup
+      vars:
+        pve_host_backup_enabled: true
+        pve_host_backup_manage_packages: false
+        pve_host_backup_manage_timer: true
+        pve_host_backup_require_quorum: false
+        pve_host_backup_upload_retry_delay: 0s
+        pve_host_backup_repository: >-
+          backup@pbs!molecule@pbs.example.test:8007:data3
+        pve_host_backup_fingerprint: >-
+          00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff
+        pve_host_backup_namespace: ""
+        pve_host_backup_id: molecule
+        pve_host_backup_token_secret: molecule-token-secret
+        pve_host_backup_encryption_key: >-
+          {"kdf":null,"created":1,"modified":1,"data":"test"}
+        pve_host_backup_encryption_passphrase: molecule-key-passphrase
+
+    - name: Create test credential directory with a wrong encryption passphrase
+      ansible.builtin.file:
+        path: /run/pve-host-backup-test-wrong-passphrase-credentials
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      no_log: true
+
+    - name: Populate test credentials with a wrong encryption passphrase
+      ansible.builtin.copy:
+        content: >-
+          {"token":"molecule-token-secret","key":{"kdf":{"Scrypt":{"n":32768,"r":8,"p":1,"salt":"test"}},"created":1,"modified":1,"data":"test"},"passphrase":"wrong-passphrase"}
+        dest: /run/pve-host-backup-test-wrong-passphrase-credentials/pbs-credentials
+        owner: root
+        group: root
+        mode: "0400"
+      no_log: true
+
+    - name: Remove prior wrong-passphrase client-attempt log
+      ansible.builtin.file:
+        path: /run/pve-host-backup-test-wrong-passphrase-attempts
+        state: absent
+
+    - name: Run PVE host backup with a wrong encryption passphrase
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-host-backup
+      environment:
+        CREDENTIALS_DIRECTORY: /run/pve-host-backup-test-wrong-passphrase-credentials
+        PBS_BACKUP_CLIENT_ATTEMPT_LOG: /run/pve-host-backup-test-wrong-passphrase-attempts
+      register: pve_host_backup_wrong_passphrase
+      changed_when: false
+      failed_when: false
+
+    - name: Count wrong-passphrase backup client attempts
+      ansible.builtin.command:
+        argv:
+          - wc
+          - -l
+          - /run/pve-host-backup-test-wrong-passphrase-attempts
+      register: pve_host_backup_wrong_passphrase_attempts
+      changed_when: false
+
+    - name: Verify wrong encryption passphrase fails at runtime
+      ansible.builtin.assert:
+        that:
+          - pve_host_backup_wrong_passphrase.rc != 0
+          - pve_host_backup_wrong_passphrase_attempts.stdout.split()[0] == '3'
+
+    - name: Remove wrong-passphrase test credentials
+      ansible.builtin.file:
+        path: /run/pve-host-backup-test-wrong-passphrase-credentials
+        state: absent
+      no_log: true
+
+    - name: Remove test systemd credential directory
+      ansible.builtin.file:
+        path: /run/pve-host-backup-test-credentials
+        state: absent
+      no_log: true
 
     - name: Initialize unsafe archive validation result
       ansible.builtin.set_fact:
@@ -241,7 +521,6 @@
             pve_host_backup_enabled: true
             pve_host_backup_manage_packages: false
             pve_host_backup_manage_timer: false
-            pve_host_backup_validate_encryption_key: false
             pve_host_backup_require_quorum: false
             pve_host_backup_repository: >-
               backup@pbs!molecule@pbs.example.test:8007:data3
@@ -311,7 +590,6 @@
             pve_host_backup_enabled: true
             pve_host_backup_manage_packages: false
             pve_host_backup_manage_timer: false
-            pve_host_backup_validate_encryption_key: false
             pve_host_backup_require_quorum: false
             pve_host_backup_repository: >-
               backup@pbs!molecule@pbs.example.test:8007:data3

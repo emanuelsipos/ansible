@@ -2,8 +2,8 @@
 pve_host_backup_enabled: false
 pve_host_backup_purge: false
 pve_host_backup_manage_packages: true
+# False stops and disables the installed timer.
 pve_host_backup_manage_timer: true
-pve_host_backup_validate_encryption_key: true
 
 pve_host_backup_packages:
   - iproute2
@@ -15,6 +15,7 @@ pve_host_backup_packages:
 
 pve_host_backup_repository: ""
 pve_host_backup_fingerprint: ""
+# Empty means the PBS datastore root; the client omits --ns.
 pve_host_backup_namespace: ""
 pve_host_backup_id: "{{ inventory_hostname }}"
 pve_host_backup_token_secret: ""
@@ -29,6 +30,8 @@ pve_host_backup_staging_parent: /run/pve-host-backup
 
 pve_host_backup_require_quorum: true
 pve_host_backup_timeout_start_sec: 6h
+pve_host_backup_upload_attempts: 3
+pve_host_backup_upload_retry_delay: 5m
 pve_host_backup_timer_calendar: "*-*-* 03:15:00"
 pve_host_backup_timer_randomized_delay: 10m
 

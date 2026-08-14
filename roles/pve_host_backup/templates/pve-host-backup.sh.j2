@@ -9,12 +9,32 @@ readonly BACKUP_ID={{ pve_host_backup_id | quote }}
 readonly LOCK_PATH={{ pve_host_backup_lock_path | quote }}
 readonly STAGING_PARENT={{ pve_host_backup_staging_parent | quote }}
 readonly REQUIRE_QUORUM={{ pve_host_backup_require_quorum | ternary('true', 'false') }}
+readonly UPLOAD_ATTEMPTS={{ pve_host_backup_upload_attempts | int }}
+readonly UPLOAD_RETRY_DELAY={{ pve_host_backup_upload_retry_delay | quote }}
+readonly PMXCFS_SOURCE=/etc/pve
 
 CREDENTIAL_WORK_DIR=""
 STAGING_DIR=""
 
 log() {
     printf '%s\n' "pve-host-backup: $*"
+}
+
+check_pmxcfs_mount() {
+    mountpoint -q "$PMXCFS_SOURCE" || {
+        log "ERROR: pmxcfs archive source is not a mountpoint: $PMXCFS_SOURCE"
+        return 1
+    }
+    if ! findmnt --json --target "$PMXCFS_SOURCE" \
+        --output TARGET,SOURCE,FSTYPE | jq --exit-status \
+        --arg target "$PMXCFS_SOURCE" \
+        '(.filesystems | length) == 1
+         and .filesystems[0].target == $target
+         and .filesystems[0].source == "/dev/fuse"
+         and .filesystems[0].fstype == "fuse"' >/dev/null; then
+        log "ERROR: pmxcfs archive source is not the expected /dev/fuse mount: $PMXCFS_SOURCE"
+        return 1
+    fi
 }
 
 cleanup() {
@@ -79,7 +99,6 @@ if [[ -s "$PBS_KEY_PASSWORD_FILE" ]]; then
 else
     rm -f -- "$PBS_KEY_PASSWORD_FILE"
 fi
-proxmox-backup-client key show "$PBS_KEY_FILE" >/dev/null
 
 systemctl is-active --quiet pve-cluster.service || {
     log "ERROR: pve-cluster.service is not active"
@@ -96,10 +115,15 @@ readonly SOURCE_{{ loop.index }}={{ archive.path | quote }}
     log "ERROR: archive source is not a trusted directory: $SOURCE_{{ loop.index }}"
     exit 1
 }
+{% if archive.name == 'pve' %}
+[[ "$SOURCE_{{ loop.index }}" == "$PMXCFS_SOURCE" ]] || exit 1
+check_pmxcfs_mount || exit 1
+{% else %}
 findmnt -T "$SOURCE_{{ loop.index }}" >/dev/null || {
     log "ERROR: archive source is not on a mounted filesystem: $SOURCE_{{ loop.index }}"
     exit 1
 }
+{% endif %}
 SOURCE_SIZE=$(du --apparent-size --block-size=1 --one-file-system --summarize \
     "$SOURCE_{{ loop.index }}" | cut -f1)
 if (( SOURCE_SIZE > {{ archive.max_bytes }} )); then
@@ -107,6 +131,8 @@ if (( SOURCE_SIZE > {{ archive.max_bytes }} )); then
     exit 1
 fi
 {% endfor %}
+
+proxmox-backup-client key show "$PBS_KEY_FILE" >/dev/null
 
 STAGING_DIR=$(mktemp --directory --tmpdir="$STAGING_PARENT" recovery.XXXXXX)
 chmod 0700 "$STAGING_DIR"
@@ -199,7 +225,6 @@ BACKUP_ARGS=(
     "recovery.pxar:${STAGING_DIR}"
     --backup-type host
     --backup-id "$BACKUP_ID"
-    --ns "$NAMESPACE"
     --repository "$REPOSITORY"
     --keyfile "$PBS_KEY_FILE"
 {% for exclude in pve_host_backup_excludes %}
@@ -207,5 +232,27 @@ BACKUP_ARGS=(
 {% endfor %}
 )
 
-proxmox-backup-client "${BACKUP_ARGS[@]}"
+if [[ -n "$NAMESPACE" ]]; then
+    BACKUP_ARGS+=(--ns "$NAMESPACE")
+fi
+
+upload_with_retry() {
+    local attempt
+
+    for (( attempt = 1; attempt <= UPLOAD_ATTEMPTS; attempt++ )); do
+        check_pmxcfs_mount || return 1
+        log "upload attempt ${attempt}/${UPLOAD_ATTEMPTS}"
+        if proxmox-backup-client "${BACKUP_ARGS[@]}"; then
+            return 0
+        fi
+        if (( attempt == UPLOAD_ATTEMPTS )); then
+            log "ERROR: backup upload failed after ${UPLOAD_ATTEMPTS} attempts"
+            return 1
+        fi
+        log "WARNING: upload attempt ${attempt}/${UPLOAD_ATTEMPTS} failed; retrying in ${UPLOAD_RETRY_DELAY}"
+        sleep "$UPLOAD_RETRY_DELAY" || return 1
+    done
+}
+
+upload_with_retry || exit 1
 log "backup completed successfully"
