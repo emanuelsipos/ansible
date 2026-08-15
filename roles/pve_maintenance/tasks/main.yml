@@ -94,13 +94,14 @@
       ansible.builtin.set_fact:
         pve_maintenance_lock_acquired: "{{ pve_maintenance_lock.rc == 0 }}"
 
-    - name: Record PVE maintenance lock owner
-      ansible.builtin.copy:
-        content: "{{ pve_maintenance_lock_owner }}\n"
-        dest: "{{ pve_maintenance_lock_dir }}/owner"
-        owner: root
-        group: root
-        mode: "0600"
+    - name: Record PVE maintenance lock owner without an atomic rename
+      ansible.builtin.shell:
+        cmd: >-
+          umask 077 &&
+          /bin/cat > {{ (pve_maintenance_lock_dir ~ '/owner') | quote }}
+        stdin: "{{ pve_maintenance_lock_owner }}"
+        stdin_add_newline: true
+      changed_when: true
       when: pve_maintenance_lock_acquired | bool
 
     - name: Fail when a PVE maintenance lock already exists

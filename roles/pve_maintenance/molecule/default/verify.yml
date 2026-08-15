@@ -71,10 +71,19 @@
             path: /etc/pve/priv/.pve-maintenance.lock/owner
           register: pve_maintenance_failed_lock
 
+        - name: Read retained failed-maintenance lock owner
+          ansible.builtin.slurp:
+            src: /etc/pve/priv/.pve-maintenance.lock/owner
+          register: pve_maintenance_failed_lock_owner
+
         - name: Confirm failed maintenance lock is retained
           ansible.builtin.assert:
             that:
               - pve_maintenance_failed_lock.stat.exists
+              - pve_maintenance_failed_lock.stat.mode == '0600'
+              - >-
+                (pve_maintenance_failed_lock_owner.content | b64decode | trim)
+                == pve_maintenance_lock_owner
       always:
         - name: Remove failed-upgrade fixture
           ansible.builtin.file:
