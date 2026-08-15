@@ -1,0 +1,58 @@
+---
+- name: Reset acceptance marker for {{ pve_update_policy_process_case.name }}
+  ansible.builtin.set_fact:
+    pve_update_policy_process_accepted: false
+
+- name: Start process fixture for {{ pve_update_policy_process_case.name }}
+  ansible.builtin.systemd_service:
+    name: "{{ pve_update_policy_process_case.service }}"
+    state: started
+
+- name: Wait for process fixture for {{ pve_update_policy_process_case.name }}
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - --quiet
+      - "{{ pve_update_policy_process_case.service }}"
+  register: pve_update_policy_process_started
+  until: pve_update_policy_process_started.rc == 0
+  retries: 10
+  delay: 1
+  changed_when: false
+
+- name: Verify policy refuses {{ pve_update_policy_process_case.name }}
+  block:
+    - name: Reapply policy during activity for {{ pve_update_policy_process_case.name }}
+      ansible.builtin.include_role:
+        name: pve_update_policy
+
+    - name: Record acceptance for {{ pve_update_policy_process_case.name }}
+      ansible.builtin.set_fact:
+        pve_update_policy_process_accepted: true
+  rescue:
+    - name: Record refusal for {{ pve_update_policy_process_case.name }}
+      ansible.builtin.set_fact:
+        pve_update_policy_process_accepted: false
+  always:
+    - name: Inspect process after refusal for {{ pve_update_policy_process_case.name }}
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - --quiet
+          - "{{ pve_update_policy_process_case.service }}"
+      register: pve_update_policy_process_active
+      changed_when: false
+      failed_when: false
+
+    - name: Stop process fixture for {{ pve_update_policy_process_case.name }}
+      ansible.builtin.systemd_service:
+        name: "{{ pve_update_policy_process_case.service }}"
+        state: stopped
+
+- name: Confirm policy safely refused {{ pve_update_policy_process_case.name }}
+  ansible.builtin.assert:
+    that:
+      - not pve_update_policy_process_accepted
+      - pve_update_policy_process_active.rc == 0

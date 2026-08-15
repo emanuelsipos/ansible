@@ -1,0 +1,46 @@
+---
+- name: Verify peer reboot safely refuses {{ pve_peer_reboot_process_case.name }}
+  block:
+    - name: Start process fixture for {{ pve_peer_reboot_process_case.name }}
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/systemctl
+          - start
+          - "{{ pve_peer_reboot_process_case.service }}"
+      changed_when: true
+
+    - name: Run peer reboot with activity for {{ pve_peer_reboot_process_case.name }}
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-peer-reboot
+      environment:
+        PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+        PVE_REBOOT_TEST_MODE: "1"
+      register: pve_peer_reboot_process_result
+      changed_when: false
+      failed_when: false
+
+    - name: Inspect process after refusal for {{ pve_peer_reboot_process_case.name }}
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/systemctl
+          - is-active
+          - --quiet
+          - "{{ pve_peer_reboot_process_case.service }}"
+      register: pve_peer_reboot_process_active
+      changed_when: false
+      failed_when: false
+
+    - name: Confirm peer reboot safely refused {{ pve_peer_reboot_process_case.name }}
+      ansible.builtin.assert:
+        that:
+          - pve_peer_reboot_process_result.rc != 0
+          - pve_peer_reboot_process_active.rc == 0
+  always:
+    - name: Stop process fixture for {{ pve_peer_reboot_process_case.name }}
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/systemctl
+          - stop
+          - "{{ pve_peer_reboot_process_case.service }}"
+      changed_when: true

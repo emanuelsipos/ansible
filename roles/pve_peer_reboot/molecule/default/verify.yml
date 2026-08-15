@@ -247,6 +247,61 @@
         group: root
         mode: "0644"
 
+    - name: Verify a harmless APT-path argument is accepted
+      block:
+        - name: Start harmless APT-path argument fixture
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/systemctl
+              - start
+              - molecule-harmless-apt-argument.service
+          changed_when: true
+
+        - name: Run peer reboot with harmless APT-path argument
+          ansible.builtin.command:
+            argv:
+              - /usr/local/sbin/pve-peer-reboot
+          environment:
+            PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+            PVE_REBOOT_TEST_MODE: "1"
+          register: pve_peer_reboot_harmless_apt_argument
+          changed_when: false
+      always:
+        - name: Stop harmless APT-path argument fixture
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/systemctl
+              - stop
+              - molecule-harmless-apt-argument.service
+          changed_when: true
+
+        - name: Remove harmless APT-path argument effects
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /run/pve-peer-reboot-test/reboot
+            - /etc/pve/priv/.pve-maintenance.lock
+
+    - name: Confirm harmless APT-path argument is accepted
+      ansible.builtin.assert:
+        that:
+          - pve_peer_reboot_harmless_apt_argument.rc == 0
+
+    - name: Verify peer reboot refuses active package-manager processes
+      ansible.builtin.include_tasks: tasks/process-case.yml
+      loop:
+        - name: apt
+          service: molecule-apt-transaction.service
+        - name: apt-get
+          service: molecule-apt-get-transaction.service
+        - name: dpkg
+          service: molecule-dpkg-transaction.service
+        - name: apt.systemd.daily
+          service: molecule-apt-systemd-daily.service
+      loop_control:
+        loop_var: pve_peer_reboot_process_case
+
     - name: Verify unknown node is rejected without reboot
       ansible.builtin.command:
         argv:
@@ -299,6 +354,9 @@
           path: /run/pve-peer-reboot-test/active-task
         - name: apt-activity
           path: /run/pve-peer-reboot-test/apt-active
+        - name: apt-service-activity
+          path: /run/pve-peer-reboot-test/apt-service-active
+          service: apt-daily.service
         - name: host-backup
           path: /run/pve-peer-reboot-test/host-backup-active
         - name: failed-host-backup

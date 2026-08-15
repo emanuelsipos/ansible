@@ -304,12 +304,72 @@
           path: /run/pve-maintenance-test/required-service-down
         - name: active-apt-process
           path: /run/pve-maintenance-test/apt-process-active
+        - name: active-apt-service
+          path: /run/pve-maintenance-test/apt-service-active
+          service: apt-daily.service
         - name: install-timer-enabled
           path: /run/pve-maintenance-test/install-timer-enabled
         - name: package-download-enabled
           path: /run/pve-maintenance-test/package-download-enabled
       loop_control:
         loop_var: pve_maintenance_failure_case
+
+    - name: Verify a harmless APT-path argument is accepted
+      block:
+        - name: Start harmless APT-path argument fixture
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/systemctl
+              - start
+              - molecule-harmless-apt-argument.service
+          changed_when: true
+
+        - name: Run preflight with harmless APT-path argument
+          ansible.builtin.command:
+            argv:
+              - /usr/local/lib/pve-maintenance/pve-maintenance-check
+              - preflight
+              - --node
+              - io
+              - --cluster-name
+              - jupiter
+              - --cluster-nodes
+              - europa,io
+              - --root-free-mb
+              - "1024"
+              - --boot-free-mb
+              - "256"
+              - --host-backup-max-age-hours
+              - "72"
+          register: pve_maintenance_harmless_apt_argument
+          changed_when: false
+      always:
+        - name: Stop harmless APT-path argument fixture
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/systemctl
+              - stop
+              - molecule-harmless-apt-argument.service
+          changed_when: true
+
+    - name: Confirm harmless APT-path argument is accepted
+      ansible.builtin.assert:
+        that:
+          - pve_maintenance_harmless_apt_argument.rc == 0
+
+    - name: Verify preflight refuses active package-manager processes
+      ansible.builtin.include_tasks: tasks/process-case.yml
+      loop:
+        - name: apt
+          service: molecule-apt-transaction.service
+        - name: apt-get
+          service: molecule-apt-get-transaction.service
+        - name: dpkg
+          service: molecule-dpkg-transaction.service
+        - name: apt.systemd.daily
+          service: molecule-apt-systemd-daily.service
+      loop_control:
+        loop_var: pve_maintenance_process_case
 
     - name: Verify invalid PVE node is rejected
       ansible.builtin.command:

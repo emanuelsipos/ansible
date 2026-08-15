@@ -127,10 +127,9 @@ check_apt_activity() {
     [[ "$timer_state" == disabled ]] \
         || fail "apt-daily-upgrade.timer is not disabled: ${timer_state:-unknown}"
     if pgrep --exact apt >/dev/null || \
-        pgrep --full -- '(^|/)apt([[:space:]]|$)' >/dev/null || \
-        pgrep --full -- '(^|/)apt-get([[:space:]]|$)' >/dev/null || \
+        pgrep --exact apt-get >/dev/null || \
         pgrep --exact dpkg >/dev/null || \
-        pgrep --full -- '(^|/)apt.systemd.daily([[:space:]]|$)' >/dev/null; then
+        pgrep --full -- '^(/bin/sh[[:space:]]+)?/usr/lib/apt/apt[.]systemd[.]daily([[:space:]]|$)' >/dev/null; then
         fail "apt, dpkg, or automatic APT process is active"
     fi
 }

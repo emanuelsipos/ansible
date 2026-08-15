@@ -128,10 +128,15 @@
                   fi
                   ;;
               systemctl)
+                  printf '%s\n' "$*" >>/run/pve-peer-reboot-test/systemctl-arguments
                   if [[ "${PVE_REBOOT_TEST_MODE:-}" != 1 ]]; then
                       exec /usr/bin/systemctl "$@"
                   fi
                   if [[ "$1" == is-active ]]; then
+                      if [[ -e /run/pve-peer-reboot-test/apt-service-active ]] && \
+                          [[ "${@: -1}" == apt-daily.service ]]; then
+                          exit 0
+                      fi
                       case "${@: -1}" in
                           pve-cluster.service|corosync.service|pvedaemon.service|pveproxy.service|pvestatd.service)
                               [[ -e /run/pve-peer-reboot-test/required-service-down ]] && exit 3
@@ -177,7 +182,7 @@
                   ;;
               pgrep)
                   [[ -e /run/pve-peer-reboot-test/apt-active ]] && exit 0
-                  exit 1
+                  exec /usr/bin/pgrep "$@"
                   ;;
               dpkg-query)
                   if [[ -e /run/pve-peer-reboot-test/newer-kernel ]]; then
@@ -225,3 +230,55 @@
         - qm
         - systemctl
         - uname
+
+    - name: Create APT process regression fixture directory
+      ansible.builtin.file:
+        path: /usr/local/lib/molecule-apt-fixtures
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install named APT process regression fixtures
+      ansible.builtin.copy:
+        src: /bin/sleep
+        dest: "/usr/local/lib/molecule-apt-fixtures/{{ item }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - apt
+        - apt-get
+        - dpkg
+
+    - name: Install APT process regression fixture units
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=Molecule {{ item.name }} APT process regression fixture
+
+          [Service]
+          Type=simple
+          ExecStart={{ item.command }}
+        dest: "/etc/systemd/system/molecule-{{ item.name }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - name: harmless-apt-argument
+          command: >-
+            /bin/bash -c 'sleep 300 & wait' harmless /var/lib/apt
+        - name: apt-transaction
+          command: /usr/local/lib/molecule-apt-fixtures/apt 300
+        - name: apt-get-transaction
+          command: /usr/local/lib/molecule-apt-fixtures/apt-get 300
+        - name: dpkg-transaction
+          command: /usr/local/lib/molecule-apt-fixtures/dpkg 300
+        - name: apt-systemd-daily
+          command: >-
+            /bin/bash -c 'exec -a /usr/lib/apt/apt.systemd.daily /bin/sleep 300'
+
+    - name: Reload APT process regression fixture units
+      ansible.builtin.systemd_service:
+        daemon_reload: true

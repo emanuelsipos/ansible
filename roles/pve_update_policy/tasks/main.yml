@@ -34,10 +34,9 @@
         argv: "{{ ['pgrep'] + item }}"
       loop:
         - [--exact, apt]
-        - [--full, --, '(^|/)apt([[:space:]]|$)']
-        - [--full, --, '(^|/)apt-get([[:space:]]|$)']
+        - [--exact, apt-get]
         - [--exact, dpkg]
-        - [--full, --, '(^|/)apt.systemd.daily([[:space:]]|$)']
+        - [--full, --, '^(/bin/sh[[:space:]]+)?/usr/lib/apt/apt[.]systemd[.]daily([[:space:]]|$)']
       register: pve_update_policy_package_processes
       changed_when: false
       failed_when: false

@@ -8,6 +8,47 @@
         enabled: true
         state: started
 
+    - name: Create active base APT service fixture directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/apt-daily.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install active base APT service fixture override
+      ansible.builtin.copy:
+        content: |
+          [Service]
+          Type=simple
+          ExecStart=
+          ExecStart=/bin/sleep 300
+        dest: /etc/systemd/system/apt-daily.service.d/molecule.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Create APT process regression fixture directory
+      ansible.builtin.file:
+        path: /usr/local/lib/molecule-apt-fixtures
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install named APT process regression fixtures
+      ansible.builtin.copy:
+        src: /bin/sleep
+        dest: "/usr/local/lib/molecule-apt-fixtures/{{ item }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - apt
+        - apt-get
+        - dpkg
+
     - name: Install active package-transaction fixture unit
       ansible.builtin.copy:
         content: |
@@ -16,8 +57,64 @@
 
           [Service]
           Type=simple
-          ExecStart=/bin/bash -c 'exec -a apt /bin/sleep 300'
+          ExecStart=/usr/local/lib/molecule-apt-fixtures/apt 300
         dest: /etc/systemd/system/molecule-apt-transaction.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install harmless APT-path argument fixture unit
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=Molecule harmless APT-path argument fixture
+
+          [Service]
+          Type=simple
+          ExecStart=/bin/bash -c 'sleep 300 & wait' harmless /var/lib/apt
+        dest: /etc/systemd/system/molecule-apt-argument.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install active apt-get transaction fixture unit
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=Molecule active apt-get transaction fixture
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/local/lib/molecule-apt-fixtures/apt-get 300
+        dest: /etc/systemd/system/molecule-apt-get-transaction.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install active dpkg transaction fixture unit
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=Molecule active dpkg transaction fixture
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/local/lib/molecule-apt-fixtures/dpkg 300
+        dest: /etc/systemd/system/molecule-dpkg-transaction.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install active apt.systemd.daily fixture unit
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=Molecule active apt.systemd.daily fixture
+
+          [Service]
+          Type=simple
+          ExecStart=/bin/bash -c 'exec -a /usr/lib/apt/apt.systemd.daily /bin/sleep 300'
+        dest: /etc/systemd/system/molecule-apt-systemd-daily.service
         owner: root
         group: root
         mode: "0644"

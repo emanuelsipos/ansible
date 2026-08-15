@@ -5,6 +5,12 @@
     state: touch
     mode: "0600"
 
+- name: Reset systemctl log for {{ pve_peer_reboot_failure_case.name }}
+  ansible.builtin.file:
+    path: /run/pve-peer-reboot-test/systemctl-arguments
+    state: absent
+  when: pve_peer_reboot_failure_case.service is defined
+
 - name: Run peer reboot failure for {{ pve_peer_reboot_failure_case.name }}
   ansible.builtin.command:
     argv:
@@ -16,6 +22,26 @@
   changed_when: false
   failed_when: false
 
+- name: Inspect active service after refusal for {{ pve_peer_reboot_failure_case.name }}
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - --quiet
+      - "{{ pve_peer_reboot_failure_case.service }}"
+  environment:
+    PVE_REBOOT_TEST_MODE: "1"
+  register: pve_peer_reboot_failure_service_active
+  changed_when: false
+  failed_when: false
+  when: pve_peer_reboot_failure_case.service is defined
+
+- name: Read systemctl log for {{ pve_peer_reboot_failure_case.name }}
+  ansible.builtin.slurp:
+    src: /run/pve-peer-reboot-test/systemctl-arguments
+  register: pve_peer_reboot_failure_systemctl_log
+  when: pve_peer_reboot_failure_case.service is defined
+
 - name: Remove peer-reboot failure fixture for {{ pve_peer_reboot_failure_case.name }}
   ansible.builtin.file:
     path: "{{ pve_peer_reboot_failure_case.path }}"
@@ -25,3 +51,12 @@
   ansible.builtin.assert:
     that:
       - pve_peer_reboot_failure_result.rc != 0
+
+- name: Confirm active service was preserved for {{ pve_peer_reboot_failure_case.name }}
+  ansible.builtin.assert:
+    that:
+      - pve_peer_reboot_failure_service_active.rc == 0
+      - >-
+        not (pve_peer_reboot_failure_systemctl_log.content | b64decode)
+        is search('(?m)^(stop|restart|try-restart|reload-or-restart|kill)\\b')
+  when: pve_peer_reboot_failure_case.service is defined

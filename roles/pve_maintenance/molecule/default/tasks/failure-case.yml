@@ -5,6 +5,12 @@
     state: touch
     mode: "0600"
 
+- name: Reset systemctl log for {{ pve_maintenance_failure_case.name }}
+  ansible.builtin.file:
+    path: /run/pve-maintenance-test/systemctl-arguments
+    state: absent
+  when: pve_maintenance_failure_case.service is defined
+
 - name: Run preflight failure for {{ pve_maintenance_failure_case.name }}
   ansible.builtin.command:
     argv:
@@ -26,6 +32,24 @@
   changed_when: false
   failed_when: false
 
+- name: Inspect active service after refusal for {{ pve_maintenance_failure_case.name }}
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - --quiet
+      - "{{ pve_maintenance_failure_case.service }}"
+  register: pve_maintenance_failure_service_active
+  changed_when: false
+  failed_when: false
+  when: pve_maintenance_failure_case.service is defined
+
+- name: Read systemctl log for {{ pve_maintenance_failure_case.name }}
+  ansible.builtin.slurp:
+    src: /run/pve-maintenance-test/systemctl-arguments
+  register: pve_maintenance_failure_systemctl_log
+  when: pve_maintenance_failure_case.service is defined
+
 - name: Remove failure fixture for {{ pve_maintenance_failure_case.name }}
   ansible.builtin.file:
     path: "{{ pve_maintenance_failure_case.path }}"
@@ -35,3 +59,12 @@
   ansible.builtin.assert:
     that:
       - pve_maintenance_failure_result.rc != 0
+
+- name: Confirm active service was preserved for {{ pve_maintenance_failure_case.name }}
+  ansible.builtin.assert:
+    that:
+      - pve_maintenance_failure_service_active.rc == 0
+      - >-
+        not (pve_maintenance_failure_systemctl_log.content | b64decode)
+        is search('(?m)^(stop|restart|try-restart|reload-or-restart|kill)\\b')
+  when: pve_maintenance_failure_case.service is defined

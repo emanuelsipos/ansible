@@ -1,0 +1,56 @@
+---
+- name: Verify preflight safely refuses {{ pve_maintenance_process_case.name }}
+  block:
+    - name: Start process fixture for {{ pve_maintenance_process_case.name }}
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/systemctl
+          - start
+          - "{{ pve_maintenance_process_case.service }}"
+      changed_when: true
+
+    - name: Run preflight with activity for {{ pve_maintenance_process_case.name }}
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/pve-maintenance/pve-maintenance-check
+          - preflight
+          - --node
+          - io
+          - --cluster-name
+          - jupiter
+          - --cluster-nodes
+          - europa,io
+          - --root-free-mb
+          - "1024"
+          - --boot-free-mb
+          - "256"
+          - --host-backup-max-age-hours
+          - "72"
+      register: pve_maintenance_process_result
+      changed_when: false
+      failed_when: false
+
+    - name: Inspect process after refusal for {{ pve_maintenance_process_case.name }}
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/systemctl
+          - is-active
+          - --quiet
+          - "{{ pve_maintenance_process_case.service }}"
+      register: pve_maintenance_process_active
+      changed_when: false
+      failed_when: false
+
+    - name: Confirm preflight safely refused {{ pve_maintenance_process_case.name }}
+      ansible.builtin.assert:
+        that:
+          - pve_maintenance_process_result.rc != 0
+          - pve_maintenance_process_active.rc == 0
+  always:
+    - name: Stop process fixture for {{ pve_maintenance_process_case.name }}
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/systemctl
+          - stop
+          - "{{ pve_maintenance_process_case.service }}"
+      changed_when: true

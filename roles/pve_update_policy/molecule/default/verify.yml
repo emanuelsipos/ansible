@@ -107,87 +107,82 @@
             'APT::Periodic::AutocleanInterval "0";' in
             pve_update_policy_effective_apt_config.stdout
 
-    - name: Start active package-transaction fixture
-      ansible.builtin.systemd_service:
-        name: molecule-apt-transaction.service
-        state: started
-
-    - name: Wait for active package-transaction fixture
-      ansible.builtin.command:
-        argv:
-          - systemctl
-          - is-active
-          - --quiet
-          - molecule-apt-transaction.service
-      register: pve_update_policy_fixture_active
-      until: pve_update_policy_fixture_active.rc == 0
-      retries: 10
-      delay: 1
-      changed_when: false
-
-    - name: Verify policy refuses an active package transaction
+    - name: Verify a harmless APT-path argument does not block policy
       block:
-        - name: Reapply policy during active package transaction
+        - name: Start harmless APT-path argument fixture
+          ansible.builtin.systemd_service:
+            name: molecule-apt-argument.service
+            state: started
+
+        - name: Wait for harmless APT-path argument fixture
+          ansible.builtin.command:
+            argv:
+              - systemctl
+              - is-active
+              - --quiet
+              - molecule-apt-argument.service
+          register: pve_update_policy_argument_fixture_active
+          until: pve_update_policy_argument_fixture_active.rc == 0
+          retries: 10
+          delay: 1
+          changed_when: false
+
+        - name: Reapply policy with harmless APT-path argument
+          ansible.builtin.include_role:
+            name: pve_update_policy
+      always:
+        - name: Stop harmless APT-path argument fixture
+          ansible.builtin.systemd_service:
+            name: molecule-apt-argument.service
+            state: stopped
+
+    - name: Verify policy refuses active package-manager processes
+      ansible.builtin.include_tasks: tasks/process-case.yml
+      loop:
+        - name: apt
+          service: molecule-apt-transaction.service
+        - name: apt-get
+          service: molecule-apt-get-transaction.service
+        - name: dpkg
+          service: molecule-dpkg-transaction.service
+        - name: apt.systemd.daily
+          service: molecule-apt-systemd-daily.service
+      loop_control:
+        loop_var: pve_update_policy_process_case
+
+    - name: Verify policy safely refuses an active base APT service
+      block:
+        - name: Start active base APT service fixture
+          ansible.builtin.systemd_service:
+            name: apt-daily.service
+            state: started
+
+        - name: Reapply policy during active base APT service
           ansible.builtin.include_role:
             name: pve_update_policy
 
-        - name: Fail if active package transaction was accepted
-          ansible.builtin.fail:
-            msg: Active package transaction was accepted
+        - name: Record active base APT service was accepted
+          ansible.builtin.set_fact:
+            pve_update_policy_active_service_accepted: true
       rescue:
-        - name: Inspect active package transaction after refusal
+        - name: Inspect base APT service after refusal
           ansible.builtin.command:
             argv:
               - systemctl
               - is-active
               - --quiet
-              - molecule-apt-transaction.service
-          register: pve_update_policy_active_transaction
-          changed_when: false
-
-        - name: Inspect package-index timer after refusal
-          ansible.builtin.command:
-            argv:
-              - systemctl
-              - is-active
-              - --quiet
-              - apt-daily.timer
-          register: pve_update_policy_index_timer_active
-          changed_when: false
-
-        - name: Inspect base APT install-mode timer after refusal
-          ansible.builtin.command:
-            argv:
-              - systemctl
-              - is-enabled
-              - apt-daily-upgrade.timer
-          register: pve_update_policy_upgrade_timer_state_after_refusal
+              - apt-daily.service
+          register: pve_update_policy_active_service
           changed_when: false
           failed_when: false
-
-        - name: Inspect base APT install-mode timer activity after refusal
-          ansible.builtin.command:
-            argv:
-              - systemctl
-              - is-active
-              - apt-daily-upgrade.timer
-          register: pve_update_policy_upgrade_timer_activity_after_refusal
-          changed_when: false
-          failed_when: false
-
-        - name: Confirm refusal preserves active work and timer policy
-          ansible.builtin.assert:
-            that:
-              - pve_update_policy_active_transaction.rc == 0
-              - pve_update_policy_index_timer_active.rc == 0
-              - >-
-                pve_update_policy_upgrade_timer_state_after_refusal.stdout ==
-                'disabled'
-              - >-
-                pve_update_policy_upgrade_timer_activity_after_refusal.stdout ==
-                'inactive'
       always:
-        - name: Stop package-transaction fixture after assertion
+        - name: Stop active base APT service fixture
           ansible.builtin.systemd_service:
-            name: molecule-apt-transaction.service
+            name: apt-daily.service
             state: stopped
+
+    - name: Confirm policy safely refused active base APT service
+      ansible.builtin.assert:
+        that:
+          - pve_update_policy_active_service_accepted is not defined
+          - pve_update_policy_active_service.rc == 0
