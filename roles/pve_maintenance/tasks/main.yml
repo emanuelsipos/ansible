@@ -98,10 +98,33 @@
       ansible.builtin.shell:
         cmd: >-
           umask 077 &&
-          /bin/cat > {{ (pve_maintenance_lock_dir ~ '/owner') | quote }}
-        stdin: "{{ pve_maintenance_lock_owner }}"
-        stdin_add_newline: true
+          printf '%s\n' {{ pve_maintenance_lock_owner | quote }} >
+          {{ (pve_maintenance_lock_dir ~ '/owner') | quote }}
       changed_when: true
+      when: pve_maintenance_lock_acquired | bool
+
+    - name: Inspect PVE maintenance lock owner marker
+      ansible.builtin.stat:
+        path: "{{ pve_maintenance_lock_dir }}/owner"
+      register: pve_maintenance_lock_owner_marker
+      when: pve_maintenance_lock_acquired | bool
+
+    - name: Read PVE maintenance lock owner marker
+      ansible.builtin.slurp:
+        src: "{{ pve_maintenance_lock_dir }}/owner"
+      register: pve_maintenance_lock_owner_marker_content
+      when: pve_maintenance_lock_acquired | bool
+
+    - name: Validate PVE maintenance lock owner marker
+      ansible.builtin.assert:
+        that:
+          - pve_maintenance_lock_owner_marker.stat.exists
+          - pve_maintenance_lock_owner_marker.stat.mode == '0600'
+          - >-
+            (pve_maintenance_lock_owner_marker_content.content | b64decode | trim)
+            == pve_maintenance_lock_owner
+        quiet: true
+        fail_msg: PVE maintenance lock owner marker is incomplete or invalid
       when: pve_maintenance_lock_acquired | bool
 
     - name: Fail when a PVE maintenance lock already exists
@@ -311,6 +334,26 @@
         - >-
           (pve_maintenance_lock_owner_file.content | b64decode | trim)
           == pve_maintenance_lock_owner
+
+    - name: Inspect released PVE maintenance cluster lock
+      ansible.builtin.stat:
+        path: "{{ pve_maintenance_lock_dir }}"
+      register: pve_maintenance_released_lock
+      when:
+        - pve_maintenance_lock_acquired | default(false) | bool
+        - pve_maintenance_release_lock | default(false) | bool
+
+    - name: Require release of the owned PVE maintenance cluster lock
+      ansible.builtin.assert:
+        that:
+          - not pve_maintenance_released_lock.stat.exists
+        quiet: true
+        fail_msg: >-
+          The owned PVE maintenance lock could not be validated or released.
+          Inspect {{ pve_maintenance_lock_dir }} before another run.
+      when:
+        - pve_maintenance_lock_acquired | default(false) | bool
+        - pve_maintenance_release_lock | default(false) | bool
 
     - name: Report retained PVE maintenance failure lock
       ansible.builtin.debug:
