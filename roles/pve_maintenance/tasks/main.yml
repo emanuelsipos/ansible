@@ -1,0 +1,321 @@
+---
+- name: Validate PVE maintenance inputs
+  ansible.builtin.assert:
+    that:
+      - pve_maintenance_execute is boolean
+      - pve_maintenance_pmxcfs_atomic_lock_validated is boolean
+      - pve_maintenance_cluster_name == 'jupiter'
+      - pve_maintenance_cluster_nodes | sort == ['europa', 'io']
+      - pve_maintenance_lock_dir == '/etc/pve/priv/.pve-maintenance.lock'
+      - pve_maintenance_apt_lock_timeout is integer
+      - pve_maintenance_apt_lock_timeout | int >= 1
+      - pve_maintenance_apt_lock_timeout | int <= 600
+      - pve_maintenance_apt_timeout is integer
+      - pve_maintenance_apt_timeout | int >= 60
+      - pve_maintenance_apt_timeout | int <= 14400
+      - pve_maintenance_root_free_mb is integer
+      - pve_maintenance_root_free_mb | int >= 1024
+      - pve_maintenance_boot_free_mb is integer
+      - pve_maintenance_boot_free_mb | int >= 256
+      - pve_maintenance_host_backup_max_age_hours is integer
+      - pve_maintenance_host_backup_max_age_hours | int >= 24
+      - pve_maintenance_host_backup_max_age_hours | int <= 72
+    quiet: true
+    fail_msg: Refusing unsafe or non-canonical PVE maintenance settings
+  tags: [pve, maintenance]
+
+- name: Validate PVE maintenance target selection
+  ansible.builtin.assert:
+    that:
+      - ansible_play_hosts_all | length == 1
+      - inventory_hostname in groups['pve']
+    quiet: true
+    fail_msg: >-
+      pve-maintenance must be limited to exactly one host in the pve inventory
+      group (for example, --limit europa).
+  tags: [pve, maintenance]
+
+- name: Install PVE maintenance helper
+  ansible.builtin.import_tasks: install.yml
+  tags: [pve, maintenance]
+
+- name: Verify pmxcfs mount before creating a cluster lock
+  ansible.builtin.command:
+    argv:
+      - /usr/local/lib/pve-maintenance/pve-maintenance-check
+      - pmxcfs
+  changed_when: false
+  tags: [pve, maintenance]
+
+- name: Require pmxcfs lock validation before package execution
+  ansible.builtin.assert:
+    that:
+      - pve_maintenance_pmxcfs_atomic_lock_validated | bool
+    quiet: true
+    fail_msg: >-
+      Execute mode is blocked until pve_maintenance_pmxcfs_atomic_lock_validated
+      is explicitly true after the documented live pmxcfs mkdir/rmdir check.
+  when: pve_maintenance_execute | bool
+  tags: [pve, maintenance]
+
+- name: Run PVE maintenance
+  tags: [pve, maintenance, molecule-idempotence-notest]
+  block:
+    - name: Initialize PVE maintenance lock ownership state
+      ansible.builtin.set_fact:
+        pve_maintenance_lock_acquired: false
+        pve_maintenance_release_lock: true
+
+    - name: Create PVE maintenance lock owner token
+      ansible.builtin.set_fact:
+        pve_maintenance_lock_owner: >-
+          {{ inventory_hostname }}-{{ ansible_facts.date_time.iso8601_basic_short }}
+
+    - name: Prepare private local PVE maintenance state directory
+      ansible.builtin.file:
+        path: /run/pve-maintenance
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Acquire fail-closed PVE maintenance cluster lock
+      ansible.builtin.command:
+        argv:
+          - mkdir
+          - --mode=0700
+          - --
+          - "{{ pve_maintenance_lock_dir }}"
+      register: pve_maintenance_lock
+      changed_when: pve_maintenance_lock.rc == 0
+      failed_when: false
+
+    - name: Record PVE maintenance cluster lock ownership
+      ansible.builtin.set_fact:
+        pve_maintenance_lock_acquired: "{{ pve_maintenance_lock.rc == 0 }}"
+
+    - name: Record PVE maintenance lock owner
+      ansible.builtin.copy:
+        content: "{{ pve_maintenance_lock_owner }}\n"
+        dest: "{{ pve_maintenance_lock_dir }}/owner"
+        owner: root
+        group: root
+        mode: "0600"
+      when: pve_maintenance_lock_acquired | bool
+
+    - name: Fail when a PVE maintenance lock already exists
+      ansible.builtin.assert:
+        that:
+          - pve_maintenance_lock_acquired | bool
+        quiet: true
+        fail_msg: >-
+          {{ pve_maintenance_lock_dir }} already exists or cannot be created.
+          Treat it as a stale or concurrent maintenance lock; review and remove
+          it manually only after confirming no maintenance run owns it.
+
+    - name: Run PVE maintenance preflight
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/pve-maintenance/pve-maintenance-check
+          - preflight
+          - --node
+          - "{{ inventory_hostname }}"
+          - --cluster-name
+          - "{{ pve_maintenance_cluster_name }}"
+          - --cluster-nodes
+          - "{{ pve_maintenance_cluster_nodes | join(',') }}"
+          - --root-free-mb
+          - "{{ pve_maintenance_root_free_mb | string }}"
+          - --boot-free-mb
+          - "{{ pve_maintenance_boot_free_mb | string }}"
+          - --host-backup-max-age-hours
+          - "{{ pve_maintenance_host_backup_max_age_hours | string }}"
+      changed_when: false
+
+    - name: Refresh PVE package indexes
+      ansible.builtin.command:
+        argv:
+          - apt-get
+          - -o
+          - "DPkg::Lock::Timeout={{ pve_maintenance_apt_lock_timeout }}"
+          - update
+      register: pve_maintenance_apt_update
+      changed_when: false
+      failed_when: false
+      async: "{{ pve_maintenance_apt_timeout }}"
+      poll: 15
+
+    - name: Display PVE package-index refresh output
+      ansible.builtin.debug:
+        msg: >-
+          {{ pve_maintenance_apt_update.stdout_lines | default([])
+          + pve_maintenance_apt_update.stderr_lines | default([]) }}
+
+    - name: Assert PVE package-index refresh succeeded
+      ansible.builtin.assert:
+        that:
+          - pve_maintenance_apt_update.rc | default(-1) == 0
+        quiet: true
+        fail_msg: PVE package-index refresh failed; its output is shown above
+
+    - name: Simulate PVE full distribution upgrade
+      ansible.builtin.command:
+        argv:
+          - apt-get
+          - -o
+          - "DPkg::Lock::Timeout={{ pve_maintenance_apt_lock_timeout }}"
+          - -s
+          - --no-remove
+          - dist-upgrade
+      register: pve_maintenance_simulation
+      changed_when: false
+      failed_when: false
+      async: "{{ pve_maintenance_apt_timeout }}"
+      poll: 15
+
+    - name: Display PVE distribution-upgrade simulation output
+      ansible.builtin.debug:
+        msg: >-
+          {{ pve_maintenance_simulation.stdout_lines | default([])
+          + pve_maintenance_simulation.stderr_lines | default([]) }}
+
+    - name: Assert PVE distribution-upgrade simulation succeeded
+      ansible.builtin.assert:
+        that:
+          - pve_maintenance_simulation.rc | default(-1) == 0
+        quiet: true
+        fail_msg: PVE distribution-upgrade simulation failed; its output is shown above
+
+    - name: Reject simulation removing any package
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/pve-maintenance/pve-maintenance-check
+          - simulation
+        stdin: "{{ pve_maintenance_simulation.stdout }}"
+      changed_when: false
+
+    - name: Recheck PVE safety immediately before package execution
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/pve-maintenance/pve-maintenance-check
+          - execute-preflight
+          - --node
+          - "{{ inventory_hostname }}"
+          - --cluster-name
+          - "{{ pve_maintenance_cluster_name }}"
+          - --cluster-nodes
+          - "{{ pve_maintenance_cluster_nodes | join(',') }}"
+          - --root-free-mb
+          - "{{ pve_maintenance_root_free_mb | string }}"
+          - --boot-free-mb
+          - "{{ pve_maintenance_boot_free_mb | string }}"
+          - --host-backup-max-age-hours
+          - "{{ pve_maintenance_host_backup_max_age_hours | string }}"
+      changed_when: false
+      when: pve_maintenance_execute | bool
+
+    - name: Retain lock until execute-mode postflight succeeds
+      ansible.builtin.set_fact:
+        pve_maintenance_release_lock: false
+      when: pve_maintenance_execute | bool
+
+    - name: Execute PVE full distribution upgrade
+      ansible.builtin.command:
+        argv:
+          - apt-get
+          - -y
+          - --no-remove
+          - -o
+          - "DPkg::Lock::Timeout={{ pve_maintenance_apt_lock_timeout }}"
+          - -o
+          - Dpkg::Options::=--force-confdef
+          - -o
+          - Dpkg::Options::=--force-confold
+          - dist-upgrade
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      register: pve_maintenance_upgrade
+      changed_when: true
+      failed_when: false
+      when: pve_maintenance_execute | bool
+
+    - name: Display PVE distribution-upgrade output
+      ansible.builtin.debug:
+        msg: >-
+          {{ pve_maintenance_upgrade.stdout_lines | default([])
+          + pve_maintenance_upgrade.stderr_lines | default([]) }}
+      when: pve_maintenance_execute | bool
+
+    - name: Assert PVE full distribution upgrade succeeded
+      ansible.builtin.assert:
+        that:
+          - pve_maintenance_upgrade.rc | default(-1) == 0
+        quiet: true
+        fail_msg: PVE full distribution upgrade failed; its output is shown above
+      when: pve_maintenance_execute | bool
+
+    - name: Run PVE maintenance postflight
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/pve-maintenance/pve-maintenance-check
+          - postflight
+          - --node
+          - "{{ inventory_hostname }}"
+          - --cluster-name
+          - "{{ pve_maintenance_cluster_name }}"
+          - --cluster-nodes
+          - "{{ pve_maintenance_cluster_nodes | join(',') }}"
+      changed_when: false
+      when: pve_maintenance_execute | bool
+
+    - name: Permit lock release after successful PVE maintenance
+      ansible.builtin.set_fact:
+        pve_maintenance_release_lock: true
+      when: pve_maintenance_execute | bool
+  always:
+    - name: Read PVE maintenance lock owner before cleanup
+      ansible.builtin.slurp:
+        src: "{{ pve_maintenance_lock_dir }}/owner"
+      register: pve_maintenance_lock_owner_file
+      failed_when: false
+      when: pve_maintenance_lock_acquired | default(false) | bool
+
+    - name: Remove PVE maintenance lock owner marker owned by this run
+      ansible.builtin.file:
+        path: "{{ pve_maintenance_lock_dir }}/owner"
+        state: absent
+      when:
+        - pve_maintenance_lock_acquired | default(false) | bool
+        - pve_maintenance_release_lock | default(false) | bool
+        - pve_maintenance_lock_owner_file is succeeded
+        - pve_maintenance_lock_owner_file.content is defined
+        - >-
+          (pve_maintenance_lock_owner_file.content | b64decode | trim)
+          == pve_maintenance_lock_owner
+
+    - name: Remove only empty PVE maintenance cluster lock owned by this run
+      ansible.builtin.command:
+        argv:
+          - rmdir
+          - --
+          - "{{ pve_maintenance_lock_dir }}"
+      register: pve_maintenance_lock_removal
+      changed_when: pve_maintenance_lock_removal.rc == 0
+      failed_when: pve_maintenance_lock_removal.rc != 0
+      when:
+        - pve_maintenance_lock_acquired | default(false) | bool
+        - pve_maintenance_release_lock | default(false) | bool
+        - pve_maintenance_lock_owner_file is succeeded
+        - pve_maintenance_lock_owner_file.content is defined
+        - >-
+          (pve_maintenance_lock_owner_file.content | b64decode | trim)
+          == pve_maintenance_lock_owner
+
+    - name: Report retained PVE maintenance failure lock
+      ansible.builtin.debug:
+        msg: >-
+          Execute mode did not complete postflight. The fail-closed lock at
+          {{ pve_maintenance_lock_dir }} was retained for manual inspection.
+      when:
+        - pve_maintenance_lock_acquired | default(false) | bool
+        - not (pve_maintenance_release_lock | default(false) | bool)

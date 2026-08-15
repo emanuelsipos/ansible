@@ -1,0 +1,5 @@
+---
+- name: Converge PVE peer reboot
+  hosts: pve
+  roles:
+    - role: pve_peer_reboot

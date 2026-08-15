@@ -1,0 +1,735 @@
+---
+- name: Verify PVE peer reboot
+  hosts: pve
+  tasks:
+    - name: Check peer reboot script syntax
+      ansible.builtin.command:
+        argv:
+          - bash
+          - -n
+          - /usr/local/sbin/pve-peer-reboot
+      changed_when: false
+
+    - name: Disable recovery timer before disabled-role repair test
+      ansible.builtin.systemd_service:
+        name: pve-peer-reboot-recovery.timer
+        enabled: false
+        state: stopped
+
+    - name: Reapply peer reboot role while disabled
+      ansible.builtin.include_role:
+        name: pve_peer_reboot
+      vars:
+        pve_peer_reboot_enabled: false
+
+    - name: Inspect artifacts after disabled role run
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /usr/local/sbin/pve-peer-reboot
+        - /etc/systemd/system/pve-peer-reboot.service
+        - /etc/systemd/system/pve-peer-reboot.timer
+        - /etc/systemd/system/pve-peer-reboot-recovery.service
+        - /etc/systemd/system/pve-peer-reboot-recovery.timer
+      register: pve_peer_reboot_disabled_artifacts
+
+    - name: Confirm disabled role does not remove existing artifacts
+      ansible.builtin.assert:
+        that:
+          - >-
+            pve_peer_reboot_disabled_artifacts.results
+            | map(attribute='stat.exists') | min
+
+    - name: Inspect disabled peer reboot timer state
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - "{{ item }}"
+          - pve-peer-reboot.timer
+      loop:
+        - is-enabled
+        - is-active
+      register: pve_peer_reboot_disabled_timer_states
+      changed_when: false
+      failed_when: false
+
+    - name: Confirm disabled role stops future reboot requests
+      ansible.builtin.assert:
+        that:
+          - pve_peer_reboot_disabled_timer_states.results[0].stdout == 'disabled'
+          - pve_peer_reboot_disabled_timer_states.results[0].rc != 0
+          - pve_peer_reboot_disabled_timer_states.results[1].stdout == 'inactive'
+          - pve_peer_reboot_disabled_timer_states.results[1].rc != 0
+
+    - name: Inspect recovery timer after disabled role run
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - "{{ item }}"
+          - pve-peer-reboot-recovery.timer
+      loop:
+        - is-enabled
+        - is-active
+      register: pve_peer_reboot_disabled_recovery_timer_states
+      changed_when: false
+
+    - name: Confirm disabled role preserves reservation recovery
+      ansible.builtin.assert:
+        that:
+          - pve_peer_reboot_disabled_recovery_timer_states.results[0].stdout == 'enabled'
+          - pve_peer_reboot_disabled_recovery_timer_states.results[0].rc == 0
+          - pve_peer_reboot_disabled_recovery_timer_states.results[1].stdout == 'active'
+          - pve_peer_reboot_disabled_recovery_timer_states.results[1].rc == 0
+
+    - name: Check peer reboot systemd unit syntax
+      ansible.builtin.command:
+        argv:
+          - systemd-analyze
+          - verify
+          - /etc/systemd/system/pve-peer-reboot.service
+          - /etc/systemd/system/pve-peer-reboot.timer
+          - /etc/systemd/system/pve-peer-reboot-recovery.service
+          - /etc/systemd/system/pve-peer-reboot-recovery.timer
+      changed_when: false
+
+    - name: Read peer reboot timer
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/pve-peer-reboot.timer
+      register: pve_peer_reboot_timer
+
+    - name: Read peer reboot service
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/pve-peer-reboot.service
+      register: pve_peer_reboot_service
+
+    - name: Read peer reboot recovery service
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/pve-peer-reboot-recovery.service
+      register: pve_peer_reboot_recovery_service
+
+    - name: Read peer reboot recovery timer
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/pve-peer-reboot-recovery.timer
+      register: pve_peer_reboot_recovery_timer
+
+    - name: Verify staggered schedule for each PVE node
+      ansible.builtin.assert:
+        that:
+          - >-
+            ('OnCalendar=Sun *-*-* 06:30:00' in
+             (pve_peer_reboot_timer.content | b64decode))
+            if inventory_hostname == 'io'
+            else
+            ('OnCalendar=Sat *-*-* 06:30:00' in
+             (pve_peer_reboot_timer.content | b64decode))
+          - "'RandomizedDelaySec=10m' in (pve_peer_reboot_timer.content | b64decode)"
+          - "'Persistent=false' in (pve_peer_reboot_timer.content | b64decode)"
+          - "'Requires=' not in (pve_peer_reboot_service.content | b64decode)"
+          - >-
+            'ConditionPathIsDirectory=/etc/pve/priv/.pve-maintenance.lock' in
+            (pve_peer_reboot_recovery_service.content | b64decode)
+          - "'OnUnitInactiveSec=5m' in (pve_peer_reboot_recovery_timer.content | b64decode)"
+
+    - name: Recover with no reservation
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-peer-reboot
+          - recover
+      environment:
+        PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+        PVE_REBOOT_TEST_MODE: "1"
+      register: pve_peer_reboot_no_reservation_recovery
+      changed_when: false
+
+    - name: Confirm no-reservation recovery is silent
+      ansible.builtin.assert:
+        that:
+          - pve_peer_reboot_no_reservation_recovery.rc == 0
+          - pve_peer_reboot_no_reservation_recovery.stdout == ''
+          - pve_peer_reboot_no_reservation_recovery.stderr == ''
+
+    - name: Verify malformed reservation recovery fails loudly
+      block:
+        - name: Create malformed reboot reservation
+          ansible.builtin.file:
+            path: /etc/pve/priv/.pve-maintenance.lock
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+
+        - name: Recover malformed reboot reservation
+          ansible.builtin.command:
+            argv:
+              - /usr/local/sbin/pve-peer-reboot
+              - recover
+          environment:
+            PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+            PVE_REBOOT_TEST_MODE: "1"
+          register: pve_peer_reboot_malformed_reservation_recovery
+          changed_when: false
+          failed_when: false
+
+        - name: Confirm malformed recovery fails loudly
+          ansible.builtin.assert:
+            that:
+              - pve_peer_reboot_malformed_reservation_recovery.rc != 0
+              - >-
+                'ERROR: cluster lock has no owner marker' in
+                pve_peer_reboot_malformed_reservation_recovery.stdout
+      always:
+        - name: Remove malformed reboot reservation
+          ansible.builtin.file:
+            path: /etc/pve/priv/.pve-maintenance.lock
+            state: absent
+
+    - name: Verify peer-owned reservation recovery is silent
+      block:
+        - name: Create peer-owned reboot reservation
+          ansible.builtin.file:
+            path: /etc/pve/priv/.pve-maintenance.lock
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+
+        - name: Mark reboot reservation as peer-owned
+          ansible.builtin.copy:
+            content: "reboot:{{ 'europa' if inventory_hostname == 'io' else 'io' }}\n"
+            dest: /etc/pve/priv/.pve-maintenance.lock/owner
+            owner: root
+            group: root
+            mode: "0600"
+
+        - name: Recover peer-owned reboot reservation
+          ansible.builtin.command:
+            argv:
+              - /usr/local/sbin/pve-peer-reboot
+              - recover
+          environment:
+            PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+            PVE_REBOOT_TEST_MODE: "1"
+          register: pve_peer_reboot_peer_reservation_recovery
+          changed_when: false
+
+        - name: Inspect peer-owned reboot reservation after recovery
+          ansible.builtin.stat:
+            path: /etc/pve/priv/.pve-maintenance.lock
+          register: pve_peer_reboot_peer_reservation
+
+        - name: Confirm peer-owned recovery is silent and retains reservation
+          ansible.builtin.assert:
+            that:
+              - pve_peer_reboot_peer_reservation_recovery.rc == 0
+              - pve_peer_reboot_peer_reservation_recovery.stdout == ''
+              - pve_peer_reboot_peer_reservation_recovery.stderr == ''
+              - pve_peer_reboot_peer_reservation.stat.exists
+      always:
+        - name: Remove peer-owned reboot reservation
+          ansible.builtin.file:
+            path: /etc/pve/priv/.pve-maintenance.lock
+            state: absent
+
+    - name: Run no-reboot-needed peer check
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-peer-reboot
+      environment:
+        PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+        PVE_REBOOT_TEST_MODE: "1"
+      changed_when: false
+
+    - name: Create reboot-needed fixture
+      ansible.builtin.file:
+        path: /var/run/reboot-required
+        state: touch
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Verify unknown node is rejected without reboot
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-peer-reboot
+      environment:
+        PVE_REBOOT_TEST_NODE: unknown
+        PVE_REBOOT_TEST_MODE: "1"
+      register: pve_peer_reboot_unknown_node
+      changed_when: false
+      failed_when: false
+
+    - name: Verify unsafe quorum blocks reboot
+      block:
+        - name: Create no-quorum fixture
+          ansible.builtin.file:
+            path: /run/pve-peer-reboot-test/no-quorum
+            state: touch
+            mode: "0600"
+
+        - name: Run peer reboot check without quorum
+          ansible.builtin.command:
+            argv:
+              - /usr/local/sbin/pve-peer-reboot
+          environment:
+            PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+            PVE_REBOOT_TEST_MODE: "1"
+          register: pve_peer_reboot_no_quorum
+          changed_when: false
+          failed_when: false
+      always:
+        - name: Remove no-quorum fixture
+          ansible.builtin.file:
+            path: /run/pve-peer-reboot-test/no-quorum
+            state: absent
+
+    - name: Verify unsafe paths did not reboot
+      ansible.builtin.assert:
+        that:
+          - pve_peer_reboot_unknown_node.rc != 0
+          - pve_peer_reboot_no_quorum.rc != 0
+
+    - name: Verify additional peer-reboot safety failures
+      ansible.builtin.include_tasks: tasks/failure-case.yml
+      loop:
+        - name: pmxcfs
+          path: /run/pve-peer-reboot-test/bad-pmxcfs
+        - name: offline-peer
+          path: /run/pve-peer-reboot-test/missing-peer
+        - name: active-task
+          path: /run/pve-peer-reboot-test/active-task
+        - name: apt-activity
+          path: /run/pve-peer-reboot-test/apt-active
+        - name: host-backup
+          path: /run/pve-peer-reboot-test/host-backup-active
+        - name: failed-host-backup
+          path: /run/pve-peer-reboot-test/failed-backup
+        - name: stale-host-backup
+          path: /run/pve-peer-reboot-test/stale-backup
+        - name: dpkg-audit
+          path: /run/pve-peer-reboot-test/dpkg-audit
+        - name: required-service
+          path: /run/pve-peer-reboot-test/required-service-down
+        - name: replication
+          path: /run/pve-peer-reboot-test/replication-error
+        - name: replication-running
+          path: /run/pve-peer-reboot-test/replication-running
+        - name: io-required-ct
+          path: /run/pve-peer-reboot-test/ct-down
+          io_only: true
+        - name: io-pbs-task
+          path: /run/pve-peer-reboot-test/pbs-task
+          io_only: true
+      loop_control:
+        loop_var: pve_peer_reboot_failure_case
+      when: >-
+        not (pve_peer_reboot_failure_case.io_only | default(false))
+        or inventory_hostname == 'io'
+
+    - name: Verify a guest without onboot blocks reboot
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-peer-reboot
+      environment:
+        PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+        PVE_REBOOT_TEST_MODE: "1"
+        PVE_REBOOT_TEST_ONBOOT: "0"
+      register: pve_peer_reboot_onboot_failure
+      changed_when: false
+      failed_when: false
+
+    - name: Confirm guest without onboot blocks reboot
+      ansible.builtin.assert:
+        that:
+          - pve_peer_reboot_onboot_failure.rc != 0
+
+    - name: Verify qm list failure fails closed
+      block:
+        - name: Create qm list failure fixture
+          ansible.builtin.file:
+            path: /run/pve-peer-reboot-test/qm-list-fail
+            state: touch
+            mode: "0600"
+
+        - name: Run peer reboot with failed qm list
+          ansible.builtin.command:
+            argv:
+              - /usr/local/sbin/pve-peer-reboot
+          environment:
+            PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+            PVE_REBOOT_TEST_MODE: "1"
+          register: pve_peer_reboot_qm_list_failure
+          changed_when: false
+          failed_when: false
+
+        - name: Inspect effects of failed qm list
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          loop:
+            - /run/pve-peer-reboot-test/reboot
+            - /etc/pve/priv/.pve-maintenance.lock
+          register: pve_peer_reboot_qm_list_failure_state
+
+        - name: Confirm failed qm list makes no reboot request or reservation
+          ansible.builtin.assert:
+            that:
+              - pve_peer_reboot_qm_list_failure.rc != 0
+              - >-
+                not (pve_peer_reboot_qm_list_failure_state.results
+                | map(attribute='stat.exists') | max)
+      always:
+        - name: Remove qm list failure artifacts
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /run/pve-peer-reboot-test/qm-list-fail
+            - /run/pve-peer-reboot-test/reboot
+            - /etc/pve/priv/.pve-maintenance.lock
+
+    - name: Verify pct list failure fails closed
+      block:
+        - name: Create pct list failure fixture
+          ansible.builtin.file:
+            path: /run/pve-peer-reboot-test/pct-list-fail
+            state: touch
+            mode: "0600"
+
+        - name: Run peer reboot with failed pct list
+          ansible.builtin.command:
+            argv:
+              - /usr/local/sbin/pve-peer-reboot
+          environment:
+            PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+            PVE_REBOOT_TEST_MODE: "1"
+          register: pve_peer_reboot_pct_list_failure
+          changed_when: false
+          failed_when: false
+
+        - name: Inspect effects of failed pct list
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          loop:
+            - /run/pve-peer-reboot-test/reboot
+            - /etc/pve/priv/.pve-maintenance.lock
+          register: pve_peer_reboot_pct_list_failure_state
+
+        - name: Confirm failed pct list makes no reboot request or reservation
+          ansible.builtin.assert:
+            that:
+              - pve_peer_reboot_pct_list_failure.rc != 0
+              - >-
+                not (pve_peer_reboot_pct_list_failure_state.results
+                | map(attribute='stat.exists') | max)
+      always:
+        - name: Remove pct list failure artifacts
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /run/pve-peer-reboot-test/pct-list-fail
+            - /run/pve-peer-reboot-test/reboot
+            - /etc/pve/priv/.pve-maintenance.lock
+
+    - name: Verify PVE maintenance lock blocks reboot
+      block:
+        - name: Create PVE maintenance lock fixture
+          ansible.builtin.file:
+            path: /etc/pve/priv/.pve-maintenance.lock
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+
+        - name: Run peer reboot with PVE maintenance lock
+          ansible.builtin.command:
+            argv:
+              - /usr/local/sbin/pve-peer-reboot
+          environment:
+            PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+            PVE_REBOOT_TEST_MODE: "1"
+          register: pve_peer_reboot_maintenance_lock
+          changed_when: false
+          failed_when: false
+      always:
+        - name: Remove PVE maintenance lock fixture
+          ansible.builtin.file:
+            path: /etc/pve/priv/.pve-maintenance.lock
+            state: absent
+
+    - name: Confirm PVE maintenance lock blocks reboot
+      ansible.builtin.assert:
+        that:
+          - pve_peer_reboot_maintenance_lock.rc != 0
+
+    - name: Start competing local peer-reboot lock holder
+      ansible.builtin.shell:
+        cmd: >-
+          exec 9>/run/pve-peer-reboot.lock && flock --exclusive 9 && sleep 30
+        executable: /bin/bash
+      async: 35
+      poll: 0
+      register: pve_peer_reboot_lock_holder
+      changed_when: false
+
+    - name: Verify local peer-reboot lock contention blocks execution
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-peer-reboot
+      environment:
+        PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+        PVE_REBOOT_TEST_MODE: "1"
+      register: pve_peer_reboot_lock_contention
+      changed_when: false
+      failed_when: false
+
+    - name: End competing local peer-reboot lock holder
+      ansible.builtin.async_status:
+        jid: "{{ pve_peer_reboot_lock_holder.ansible_job_id }}"
+      register: pve_peer_reboot_lock_holder_finished
+      until: pve_peer_reboot_lock_holder_finished.finished
+      retries: 35
+      delay: 1
+      changed_when: false
+
+    - name: Confirm local peer-reboot lock contention blocks execution
+      ansible.builtin.assert:
+        that:
+          - pve_peer_reboot_lock_contention.rc != 0
+
+    - name: Verify failed reboot request releases cluster reservation
+      block:
+        - name: Create failed reboot-request fixture
+          ansible.builtin.file:
+            path: /run/pve-peer-reboot-test/reboot-fail
+            state: touch
+            mode: "0600"
+
+        - name: Run peer reboot with failed reboot request
+          ansible.builtin.command:
+            argv:
+              - /usr/local/sbin/pve-peer-reboot
+          environment:
+            PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+            PVE_REBOOT_TEST_MODE: "1"
+          register: pve_peer_reboot_failed_request
+          changed_when: false
+          failed_when: false
+
+        - name: Inspect reservation after failed reboot request
+          ansible.builtin.stat:
+            path: /etc/pve/priv/.pve-maintenance.lock
+          register: pve_peer_reboot_failed_request_reservation
+
+        - name: Confirm failed reboot request releases reservation
+          ansible.builtin.assert:
+            that:
+              - pve_peer_reboot_failed_request.rc != 0
+              - not pve_peer_reboot_failed_request_reservation.stat.exists
+      always:
+        - name: Remove failed reboot-request fixture
+          ansible.builtin.file:
+            path: /run/pve-peer-reboot-test/reboot-fail
+            state: absent
+
+        - name: Remove failed reboot reservation fixture
+          ansible.builtin.file:
+            path: /etc/pve/priv/.pve-maintenance.lock
+            state: absent
+
+    - name: Verify shutdown interruption retains cluster reservation
+      block:
+        - name: Create shutdown-interruption fixture
+          ansible.builtin.file:
+            path: /run/pve-peer-reboot-test/reboot-sigterm
+            state: touch
+            mode: "0600"
+
+        - name: Interrupt peer reboot after shutdown request
+          ansible.builtin.command:
+            argv:
+              - /usr/local/sbin/pve-peer-reboot
+          environment:
+            PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+            PVE_REBOOT_TEST_MODE: "1"
+          register: pve_peer_reboot_shutdown_interruption
+          changed_when: false
+          failed_when: false
+
+        - name: Inspect interrupted reboot reservation
+          ansible.builtin.stat:
+            path: /etc/pve/priv/.pve-maintenance.lock/owner
+          register: pve_peer_reboot_interrupted_reservation
+
+        - name: Confirm interrupted shutdown retains reservation
+          ansible.builtin.assert:
+            that:
+              - pve_peer_reboot_shutdown_interruption.rc != 0
+              - pve_peer_reboot_interrupted_reservation.stat.exists
+      always:
+        - name: Remove shutdown-interruption fixture
+          ansible.builtin.file:
+            path: /run/pve-peer-reboot-test/reboot-sigterm
+            state: absent
+
+        - name: Remove interrupted reboot reservation fixture
+          ansible.builtin.file:
+            path: /etc/pve/priv/.pve-maintenance.lock
+            state: absent
+
+    - name: Create newer-kernel fixture
+      ansible.builtin.file:
+        path: /run/pve-peer-reboot-test/newer-kernel
+        state: touch
+        mode: "0600"
+
+    - name: Verify Debian kernel version ordering requests a reboot
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-peer-reboot
+      environment:
+        PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+        PVE_REBOOT_TEST_MODE: "1"
+      register: pve_peer_reboot_newer_kernel
+      changed_when: false
+
+    - name: Confirm newest Debian-versioned kernel was selected
+      ansible.builtin.assert:
+        that:
+          - >-
+            'newest signed kernel=6.14.0-10-pve' in
+            pve_peer_reboot_newer_kernel.stdout
+
+    - name: Verify successful reboot keeps the cluster reservation
+      ansible.builtin.stat:
+        path: /etc/pve/priv/.pve-maintenance.lock/owner
+      register: pve_peer_reboot_reservation
+
+    - name: Read successful reboot reservation owner
+      ansible.builtin.slurp:
+        src: /etc/pve/priv/.pve-maintenance.lock/owner
+      register: pve_peer_reboot_reservation_owner
+
+    - name: Confirm local reboot reservation is retained
+      ansible.builtin.assert:
+        that:
+          - pve_peer_reboot_reservation.stat.exists
+          - >-
+            (pve_peer_reboot_reservation_owner.content | b64decode | trim)
+            == 'reboot:' ~ inventory_hostname
+
+    - name: Verify reservation blocks a second local reboot
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-peer-reboot
+      environment:
+        PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+        PVE_REBOOT_TEST_MODE: "1"
+      register: pve_peer_reboot_cluster_lock_contention
+      changed_when: false
+      failed_when: false
+
+    - name: Confirm cluster reservation blocks a second reboot
+      ansible.builtin.assert:
+        that:
+          - pve_peer_reboot_cluster_lock_contention.rc != 0
+
+    - name: Verify unchanged boot ID retains local reservation
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-peer-reboot
+          - recover
+      environment:
+        PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+        PVE_REBOOT_TEST_MODE: "1"
+      register: pve_peer_reboot_unchanged_boot_recovery
+      changed_when: false
+      failed_when: false
+
+    - name: Inspect reservation after unchanged boot recovery
+      ansible.builtin.stat:
+        path: /etc/pve/priv/.pve-maintenance.lock
+      register: pve_peer_reboot_unchanged_boot_reservation
+
+    - name: Confirm unchanged boot ID fails closed
+      ansible.builtin.assert:
+        that:
+          - pve_peer_reboot_unchanged_boot_recovery.rc != 0
+          - pve_peer_reboot_unchanged_boot_reservation.stat.exists
+          - >-
+            'ERROR: local boot ID has not changed' in
+            pve_peer_reboot_unchanged_boot_recovery.stdout
+
+    - name: Simulate completed reboot with a prior boot ID
+      ansible.builtin.copy:
+        content: "previous-test-boot-id\n"
+        dest: /etc/pve/priv/.pve-maintenance.lock/boot-id
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Recover successful reboot reservation
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-peer-reboot
+          - recover
+      environment:
+        PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+        PVE_REBOOT_TEST_MODE: "1"
+      changed_when: false
+
+    - name: Inspect recovered local reboot reservation
+      ansible.builtin.stat:
+        path: /etc/pve/priv/.pve-maintenance.lock
+      register: pve_peer_reboot_recovered_reservation
+
+    - name: Confirm local reboot reservation is recovered
+      ansible.builtin.assert:
+        that:
+          - not pve_peer_reboot_recovered_reservation.stat.exists
+
+    - name: Remove newer-kernel fixture
+      ansible.builtin.file:
+        path: /run/pve-peer-reboot-test/newer-kernel
+        state: absent
+
+    - name: Run safe reboot-needed peer check with mock reboot
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-peer-reboot
+      environment:
+        PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+        PVE_REBOOT_TEST_MODE: "1"
+      changed_when: false
+
+    - name: Simulate final completed reboot with a prior boot ID
+      ansible.builtin.copy:
+        content: "previous-test-boot-id\n"
+        dest: /etc/pve/priv/.pve-maintenance.lock/boot-id
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Recover final reboot reservation
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-peer-reboot
+          - recover
+      environment:
+        PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+        PVE_REBOOT_TEST_MODE: "1"
+      changed_when: false
+
+    - name: Read mocked reboot requests
+      ansible.builtin.slurp:
+        src: /run/pve-peer-reboot-test/reboot
+      register: pve_peer_reboot_requests
+
+    - name: Verify safe reboot path requests only local reboot
+      ansible.builtin.assert:
+        that:
+          - "'reboot' in (pve_peer_reboot_requests.content | b64decode)"
+
+    - name: Remove reboot-needed fixture
+      ansible.builtin.file:
+        path: /var/run/reboot-required
+        state: absent

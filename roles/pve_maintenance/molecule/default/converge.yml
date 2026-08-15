@@ -1,0 +1,5 @@
+---
+- name: Converge report-only PVE maintenance
+  hosts: pve
+  roles:
+    - role: pve_maintenance

@@ -1,0 +1,27 @@
+---
+- name: Prepare PVE update policy fixtures
+  hosts: all
+  tasks:
+    - name: Enable and start base APT install-mode timer
+      ansible.builtin.systemd_service:
+        name: apt-daily-upgrade.timer
+        enabled: true
+        state: started
+
+    - name: Install active package-transaction fixture unit
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=Molecule active package transaction fixture
+
+          [Service]
+          Type=simple
+          ExecStart=/bin/bash -c 'exec -a apt /bin/sleep 300'
+        dest: /etc/systemd/system/molecule-apt-transaction.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Reload active package-transaction fixture
+      ansible.builtin.systemd_service:
+        daemon_reload: true

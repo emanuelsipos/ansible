@@ -1,0 +1,114 @@
+---
+- name: Configure PVE update policy
+  tags: [pve, updates]
+  block:
+    - name: Disable base APT install-mode timer
+      ansible.builtin.systemd_service:
+        name: apt-daily-upgrade.timer
+        enabled: false
+        state: stopped
+      tags: [molecule-idempotence-notest]
+
+    - name: Stop apt package-index timer during policy convergence
+      ansible.builtin.systemd_service:
+        name: apt-daily.timer
+        state: stopped
+      tags: [molecule-idempotence-notest]
+
+    - name: Inspect base APT service activity
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - --quiet
+          - "{{ item }}"
+      loop:
+        - apt-daily.service
+        - apt-daily-upgrade.service
+      register: pve_update_policy_automatic_apt_activity
+      changed_when: false
+      failed_when: false
+
+    - name: Inspect package-manager process activity
+      ansible.builtin.command:
+        argv: "{{ ['pgrep'] + item }}"
+      loop:
+        - [--exact, apt]
+        - [--full, --, '(^|/)apt([[:space:]]|$)']
+        - [--full, --, '(^|/)apt-get([[:space:]]|$)']
+        - [--exact, dpkg]
+        - [--full, --, '(^|/)apt.systemd.daily([[:space:]]|$)']
+      register: pve_update_policy_package_processes
+      changed_when: false
+      failed_when: false
+
+    - name: Audit dpkg before applying PVE update policy
+      ansible.builtin.command:
+        argv:
+          - dpkg
+          - --audit
+      register: pve_update_policy_dpkg_audit
+      changed_when: false
+      failed_when: false
+
+    - name: Require idle and healthy package management
+      ansible.builtin.assert:
+        that:
+          - >-
+            pve_update_policy_automatic_apt_activity.results
+            | selectattr('rc', 'equalto', 0) | list | length == 0
+          - >-
+            pve_update_policy_package_processes.results
+            | selectattr('rc', 'equalto', 0) | list | length == 0
+          - pve_update_policy_dpkg_audit.rc == 0
+          - pve_update_policy_dpkg_audit.stdout | trim | length == 0
+        quiet: true
+        fail_msg: >-
+          Package management is active or dpkg is not clean. Let the current
+          transaction finish, repair dpkg if needed, and rerun the playbook. No
+          active transaction was stopped.
+
+    - name: Install PVE apt update policy
+      ansible.builtin.template:
+        src: 99-pve-update-policy.j2
+        dest: /etc/apt/apt.conf.d/99-pve-update-policy
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Read effective PVE apt update policy
+      ansible.builtin.command:
+        argv:
+          - apt-config
+          - dump
+      register: pve_update_policy_effective_apt_config
+      changed_when: false
+
+    - name: Assert effective PVE apt update policy
+      ansible.builtin.assert:
+        that:
+          - >-
+            'APT::Periodic::Update-Package-Lists "1";' in
+            pve_update_policy_effective_apt_config.stdout
+          - >-
+            'APT::Periodic::Download-Upgradeable-Packages "0";' in
+            pve_update_policy_effective_apt_config.stdout
+          - >-
+            'APT::Periodic::AutocleanInterval "0";' in
+            pve_update_policy_effective_apt_config.stdout
+        quiet: true
+        fail_msg: Effective apt policy does not match controlled PVE updates
+  always:
+    - name: Reassert disabled base APT install-mode timer
+      ansible.builtin.systemd_service:
+        name: apt-daily-upgrade.timer
+        enabled: false
+        state: stopped
+      tags: [molecule-idempotence-notest]
+
+    - name: Restore apt package-index timer
+      ansible.builtin.systemd_service:
+        name: apt-daily.timer
+        enabled: true
+        state: started
+      tags: [molecule-idempotence-notest]

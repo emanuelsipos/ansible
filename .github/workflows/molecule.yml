@@ -27,6 +27,9 @@ jobs:
           - github_release_download
           - journald_retention
           - pve_host_backup
+          - pve_maintenance
+          - pve_peer_reboot
+          - pve_update_policy
           - sysctl
           - vzdump
           - zsh

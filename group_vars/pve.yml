@@ -21,3 +21,29 @@ zram_swappiness: 10
 
 vzdump_extra_exclude_paths:
   - /opt/docker/birdnet/data/clips
+
+# PVE package installation is performed only by pve_maintenance. Package-index
+# refresh remains enabled, while the base APT install-mode timer, automatic
+# package downloads, and autoclean stay off.
+
+# Explicit maintenance policy. The first controlled update is europa, then io.
+pve_maintenance_execute: false
+# Validated on 2026-08-14 on the current jupiter europa/io cluster: atomic
+# mkdir, second-mkdir failure, and empty rmdir succeeded on the pmxcfs lock.
+pve_maintenance_pmxcfs_atomic_lock_validated: true
+pve_maintenance_cluster_name: jupiter
+pve_maintenance_cluster_nodes:
+  - europa
+  - io
+
+# The peer-aware local reboot timer is intentionally disabled until the first
+# controlled updates and observed reboots have been validated.
+pve_peer_reboot_enabled: false
+pve_peer_reboot_pmxcfs_atomic_lock_validated: true
+pve_peer_reboot_cluster_name: jupiter
+pve_peer_reboot_cluster_nodes:
+  - europa
+  - io
+pve_peer_reboot_calendars:
+  europa: "Sat *-*-* 06:30:00"
+  io: "Sun *-*-* 06:30:00"

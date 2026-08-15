@@ -4,6 +4,7 @@
   roles:
     - role: hifis.unattended_upgrades
       tags: [base, upgrades]
+      when: inventory_hostname not in groups.get('pve', [])
     - role: journald_retention
       tags: [base, journald]
     - role: zsh
@@ -96,6 +97,10 @@
       tags: [vzdump]
     - role: pve_host_backup
       tags: [host_backup]
+    - role: pve_update_policy
+      tags: [updates]
+    - role: pve_peer_reboot
+      tags: [reboot]
   vars:
     smartmon_configuration_lines:
       - >-

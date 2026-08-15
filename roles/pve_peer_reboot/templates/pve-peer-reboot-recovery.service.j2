@@ -1,0 +1,15 @@
+[Unit]
+Description=Release the PVE cluster reboot reservation after local recovery
+After=network-online.target pve-cluster.service corosync.service pvedaemon.service pveproxy.service pvestatd.service
+Wants=network-online.target
+ConditionPathIsDirectory={{ pve_peer_reboot_maintenance_lock_path }}
+
+[Service]
+Type=oneshot
+ExecStart={{ pve_peer_reboot_script_path }} recover
+TimeoutStartSec=2m
+User=root
+Group=root
+StandardOutput=journal
+StandardError=journal
+UMask=0077

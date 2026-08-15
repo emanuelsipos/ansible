@@ -24,6 +24,7 @@ EXPECTED = {
     "beszel": ("pve-test", {"public_domain"}),
     "komodo": ("app-test", {"komodo_server_enabled"}),
     "tailscale": ("edge-test", {"machines_sysctl_settings"}),
+    "pve-maintenance": ("pve-test", {"pve_maintenance_cluster_name"}),
 }
 INVENTORY = """\
 [all:vars]

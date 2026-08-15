@@ -1,0 +1,193 @@
+---
+- name: Verify PVE update policy
+  hosts: all
+  tasks:
+    - name: Inspect PVE update-policy file
+      ansible.builtin.stat:
+        path: /etc/apt/apt.conf.d/99-pve-update-policy
+      register: pve_update_policy_file
+
+    - name: Verify PVE policy file
+      ansible.builtin.assert:
+        that:
+          - pve_update_policy_file.stat.exists
+
+    - name: Inspect PVE package-index timer state
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-enabled
+          - apt-daily.timer
+      register: pve_update_policy_timer_state
+      changed_when: false
+
+    - name: Verify PVE package-index timer state
+      ansible.builtin.assert:
+        that:
+          - pve_update_policy_timer_state.stdout == 'enabled'
+          - pve_update_policy_timer_state.rc == 0
+
+    - name: Inspect PVE package-index timer activity
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - apt-daily.timer
+      register: pve_update_policy_index_timer_activity
+      changed_when: false
+
+    - name: Verify PVE package-index timer activity
+      ansible.builtin.assert:
+        that:
+          - pve_update_policy_index_timer_activity.stdout == 'active'
+          - pve_update_policy_index_timer_activity.rc == 0
+
+    - name: Inspect base APT install-mode timer state
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-enabled
+          - apt-daily-upgrade.timer
+      register: pve_update_policy_upgrade_timer_state
+      changed_when: false
+      failed_when: false
+
+    - name: Verify base APT install-mode timer is disabled
+      ansible.builtin.assert:
+        that:
+          - pve_update_policy_upgrade_timer_state.stdout == 'disabled'
+
+    - name: Inspect base APT install-mode timer activity
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - apt-daily-upgrade.timer
+      register: pve_update_policy_upgrade_timer_activity
+      changed_when: false
+      failed_when: false
+
+    - name: Verify base APT install-mode timer is inactive
+      ansible.builtin.assert:
+        that:
+          - pve_update_policy_upgrade_timer_activity.stdout == 'inactive'
+
+    - name: Read PVE apt update policy
+      ansible.builtin.slurp:
+        src: /etc/apt/apt.conf.d/99-pve-update-policy
+      register: pve_update_policy_configuration
+
+    - name: Read effective PVE apt update policy
+      ansible.builtin.command:
+        argv:
+          - apt-config
+          - dump
+      register: pve_update_policy_effective_apt_config
+      changed_when: false
+
+    - name: Verify controlled PVE update policy
+      ansible.builtin.assert:
+        that:
+          - >-
+            'APT::Periodic::Update-Package-Lists "1";' in
+            (pve_update_policy_configuration.content | b64decode)
+          - >-
+            'APT::Periodic::Download-Upgradeable-Packages "0";' in
+            (pve_update_policy_configuration.content | b64decode)
+          - >-
+            'APT::Periodic::AutocleanInterval "0";' in
+            (pve_update_policy_configuration.content | b64decode)
+          - >-
+            'APT::Periodic::Update-Package-Lists "1";' in
+            pve_update_policy_effective_apt_config.stdout
+          - >-
+            'APT::Periodic::Download-Upgradeable-Packages "0";' in
+            pve_update_policy_effective_apt_config.stdout
+          - >-
+            'APT::Periodic::AutocleanInterval "0";' in
+            pve_update_policy_effective_apt_config.stdout
+
+    - name: Start active package-transaction fixture
+      ansible.builtin.systemd_service:
+        name: molecule-apt-transaction.service
+        state: started
+
+    - name: Wait for active package-transaction fixture
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - --quiet
+          - molecule-apt-transaction.service
+      register: pve_update_policy_fixture_active
+      until: pve_update_policy_fixture_active.rc == 0
+      retries: 10
+      delay: 1
+      changed_when: false
+
+    - name: Verify policy refuses an active package transaction
+      block:
+        - name: Reapply policy during active package transaction
+          ansible.builtin.include_role:
+            name: pve_update_policy
+
+        - name: Fail if active package transaction was accepted
+          ansible.builtin.fail:
+            msg: Active package transaction was accepted
+      rescue:
+        - name: Inspect active package transaction after refusal
+          ansible.builtin.command:
+            argv:
+              - systemctl
+              - is-active
+              - --quiet
+              - molecule-apt-transaction.service
+          register: pve_update_policy_active_transaction
+          changed_when: false
+
+        - name: Inspect package-index timer after refusal
+          ansible.builtin.command:
+            argv:
+              - systemctl
+              - is-active
+              - --quiet
+              - apt-daily.timer
+          register: pve_update_policy_index_timer_active
+          changed_when: false
+
+        - name: Inspect base APT install-mode timer after refusal
+          ansible.builtin.command:
+            argv:
+              - systemctl
+              - is-enabled
+              - apt-daily-upgrade.timer
+          register: pve_update_policy_upgrade_timer_state_after_refusal
+          changed_when: false
+          failed_when: false
+
+        - name: Inspect base APT install-mode timer activity after refusal
+          ansible.builtin.command:
+            argv:
+              - systemctl
+              - is-active
+              - apt-daily-upgrade.timer
+          register: pve_update_policy_upgrade_timer_activity_after_refusal
+          changed_when: false
+          failed_when: false
+
+        - name: Confirm refusal preserves active work and timer policy
+          ansible.builtin.assert:
+            that:
+              - pve_update_policy_active_transaction.rc == 0
+              - pve_update_policy_index_timer_active.rc == 0
+              - >-
+                pve_update_policy_upgrade_timer_state_after_refusal.stdout ==
+                'disabled'
+              - >-
+                pve_update_policy_upgrade_timer_activity_after_refusal.stdout ==
+                'inactive'
+      always:
+        - name: Stop package-transaction fixture after assertion
+          ansible.builtin.systemd_service:
+            name: molecule-apt-transaction.service
+            state: stopped

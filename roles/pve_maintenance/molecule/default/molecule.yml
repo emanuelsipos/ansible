@@ -1,0 +1,34 @@
+---
+dependency:
+  name: galaxy
+driver:
+  name: docker
+platforms:
+  - name: io
+    image: geerlingguy/docker-debian12-ansible@sha256:0b96d8780359f0833bf2d81b5b26ede106beae09c7f22b19a7abeef54770551f
+    pre_build_image: true
+    pull: true
+    privileged: true
+    cgroupns_mode: host
+    command: >-
+      /bin/sh -c 'if ! mountpoint -q /proc/sys/fs/binfmt_misc; then
+      mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc; fi &&
+      mount --bind /proc/sys/fs/binfmt_misc/status
+      /proc/sys/fs/binfmt_misc/status &&
+      mount -o remount,bind,ro /proc/sys/fs/binfmt_misc/status &&
+      exec /lib/systemd/systemd'
+    groups:
+      - pve
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+provisioner:
+  name: ansible
+  inventory:
+    group_vars:
+      pve:
+        pve_maintenance_apt_timeout: 60
+        pve_maintenance_root_free_mb: 1024
+        pve_maintenance_boot_free_mb: 256
+        pve_maintenance_host_backup_max_age_hours: 72
+verifier:
+  name: ansible

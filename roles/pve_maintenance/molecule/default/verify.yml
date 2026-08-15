@@ -1,0 +1,348 @@
+---
+- name: Verify report and execute PVE maintenance
+  hosts: pve
+  tasks:
+    - name: Read report-only apt command arguments
+      ansible.builtin.slurp:
+        src: /run/pve-maintenance-test/apt-arguments
+      register: pve_maintenance_report_apt
+
+    - name: Verify report-only exact apt commands
+      ansible.builtin.assert:
+        that:
+          - >-
+            '-o DPkg::Lock::Timeout=120 update' in
+            (pve_maintenance_report_apt.content | b64decode)
+          - >-
+            '-o DPkg::Lock::Timeout=120 -s --no-remove dist-upgrade' in
+            (pve_maintenance_report_apt.content | b64decode)
+          - "'-y ' not in (pve_maintenance_report_apt.content | b64decode)"
+
+    - name: Execute explicitly approved PVE maintenance with mocks
+      ansible.builtin.include_role:
+        name: pve_maintenance
+      vars:
+        pve_maintenance_execute: true
+        pve_maintenance_pmxcfs_atomic_lock_validated: true
+
+    - name: Read execute-mode apt command arguments
+      ansible.builtin.slurp:
+        src: /run/pve-maintenance-test/apt-arguments
+      register: pve_maintenance_execute_apt
+
+    - name: Verify exact execute-mode dist-upgrade arguments
+      ansible.builtin.assert:
+        that:
+          - >-
+            '-y --no-remove -o DPkg::Lock::Timeout=120 -o Dpkg::Options::=--force-confdef'
+            in (pve_maintenance_execute_apt.content | b64decode)
+          - >-
+            '-o Dpkg::Options::=--force-confold dist-upgrade'
+            in (pve_maintenance_execute_apt.content | b64decode)
+          - pve_maintenance_upgrade.ansible_job_id is not defined
+
+    - name: Run report-only PVE maintenance with validated lock semantics
+      ansible.builtin.include_role:
+        name: pve_maintenance
+      vars:
+        pve_maintenance_execute: false
+        pve_maintenance_pmxcfs_atomic_lock_validated: true
+
+    - name: Create failed-upgrade fixture
+      ansible.builtin.file:
+        path: /run/pve-maintenance-test/upgrade-failure
+        state: touch
+        mode: "0600"
+
+    - name: Verify failed upgrade retains the cluster lock
+      block:
+        - name: Attempt failing execute-mode maintenance
+          ansible.builtin.include_role:
+            name: pve_maintenance
+          vars:
+            pve_maintenance_execute: true
+            pve_maintenance_pmxcfs_atomic_lock_validated: true
+        - name: Fail if failed upgrade was accepted
+          ansible.builtin.fail:
+            msg: Failed PVE upgrade was accepted
+      rescue:
+        - name: Inspect retained failed-maintenance lock
+          ansible.builtin.stat:
+            path: /etc/pve/priv/.pve-maintenance.lock/owner
+          register: pve_maintenance_failed_lock
+
+        - name: Confirm failed maintenance lock is retained
+          ansible.builtin.assert:
+            that:
+              - pve_maintenance_failed_lock.stat.exists
+      always:
+        - name: Remove failed-upgrade fixture
+          ansible.builtin.file:
+            path: /run/pve-maintenance-test/upgrade-failure
+            state: absent
+
+        - name: Remove failed-maintenance lock fixture after assertion
+          ansible.builtin.file:
+            path: /etc/pve/priv/.pve-maintenance.lock
+            state: absent
+
+        - name: Remove failed-upgrade reboot marker
+          ansible.builtin.file:
+            path: /var/run/reboot-required
+            state: absent
+
+    - name: Create lock contention fixture
+      ansible.builtin.file:
+        path: /etc/pve/priv/.pve-maintenance.lock
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Verify existing lock blocks maintenance
+      block:
+        - name: Attempt maintenance with existing lock
+          ansible.builtin.include_role:
+            name: pve_maintenance
+        - name: Fail if existing lock was accepted
+          ansible.builtin.fail:
+            msg: Existing maintenance lock was accepted
+      rescue:
+        - name: Remove lock contention fixture
+          ansible.builtin.file:
+            path: /etc/pve/priv/.pve-maintenance.lock
+            state: absent
+
+    - name: Create protected-removal simulation fixture
+      ansible.builtin.file:
+        path: /run/pve-maintenance-test/protected-removal
+        state: touch
+        mode: "0600"
+
+    - name: Verify protected package removal is rejected
+      block:
+        - name: Attempt protected-removal simulation
+          ansible.builtin.include_role:
+            name: pve_maintenance
+        - name: Fail if protected removal was accepted
+          ansible.builtin.fail:
+            msg: Protected PVE package removal was accepted
+      rescue:
+        - name: Remove protected-removal simulation fixture
+          ansible.builtin.file:
+            path: /run/pve-maintenance-test/protected-removal
+            state: absent
+
+    - name: Create kernel-removal simulation fixture
+      ansible.builtin.file:
+        path: /run/pve-maintenance-test/kernel-removal
+        state: touch
+        mode: "0600"
+
+    - name: Verify kernel package removal is rejected
+      block:
+        - name: Attempt kernel-removal simulation
+          ansible.builtin.include_role:
+            name: pve_maintenance
+        - name: Fail if kernel removal was accepted
+          ansible.builtin.fail:
+            msg: PVE kernel package removal was accepted
+      rescue:
+        - name: Remove kernel-removal simulation fixture
+          ansible.builtin.file:
+            path: /run/pve-maintenance-test/kernel-removal
+            state: absent
+
+    - name: Reset apt command log before execute-preflight regression
+      ansible.builtin.copy:
+        content: ""
+        dest: /run/pve-maintenance-test/apt-arguments
+        mode: "0600"
+
+    - name: Create service failure after simulation fixture
+      ansible.builtin.file:
+        path: /run/pve-maintenance-test/service-fails-after-simulation
+        state: touch
+        mode: "0600"
+
+    - name: Verify execute preflight blocks newly unhealthy service
+      block:
+        - name: Attempt execute with service failing after simulation
+          ansible.builtin.include_role:
+            name: pve_maintenance
+          vars:
+            pve_maintenance_execute: true
+            pve_maintenance_pmxcfs_atomic_lock_validated: true
+        - name: Fail if newly unhealthy service was accepted
+          ansible.builtin.fail:
+            msg: Newly unhealthy PVE service was accepted
+      rescue:
+        - name: Read blocked execute apt command arguments
+          ansible.builtin.slurp:
+            src: /run/pve-maintenance-test/apt-arguments
+          register: pve_maintenance_blocked_execute_apt
+
+        - name: Confirm real upgrade did not start
+          ansible.builtin.assert:
+            that:
+              - "'-y ' not in (pve_maintenance_blocked_execute_apt.content | b64decode)"
+      always:
+        - name: Remove execute-preflight failure fixtures
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /run/pve-maintenance-test/service-fails-after-simulation
+            - /run/pve-maintenance-test/required-service-down
+            - /etc/pve/priv/.pve-maintenance.lock
+
+    - name: Create unhealthy cluster task fixture
+      ansible.builtin.file:
+        path: /run/pve-maintenance-test/active-task
+        state: touch
+        mode: "0600"
+
+    - name: Run preflight with active cluster task
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/pve-maintenance/pve-maintenance-check
+          - preflight
+          - --node
+          - io
+          - --cluster-name
+          - jupiter
+          - --cluster-nodes
+          - europa,io
+          - --root-free-mb
+          - "1024"
+          - --boot-free-mb
+          - "256"
+          - --host-backup-max-age-hours
+          - "72"
+      register: pve_maintenance_active_task
+      changed_when: false
+      failed_when: false
+
+    - name: Verify active cluster task is rejected
+      ansible.builtin.assert:
+        that:
+          - pve_maintenance_active_task.rc != 0
+
+    - name: Remove unhealthy cluster task fixture
+      ansible.builtin.file:
+        path: /run/pve-maintenance-test/active-task
+        state: absent
+
+    - name: Read apt commands before hostname mismatch
+      ansible.builtin.slurp:
+        src: /run/pve-maintenance-test/apt-arguments
+      register: pve_maintenance_apt_before_hostname_mismatch
+
+    - name: Verify hostname mismatch blocks maintenance before APT
+      block:
+        - name: Create hostname mismatch fixture
+          ansible.builtin.file:
+            path: /run/pve-maintenance-test/hostname-mismatch
+            state: touch
+            mode: "0600"
+
+        - name: Attempt maintenance with mismatched host identity
+          ansible.builtin.include_role:
+            name: pve_maintenance
+          vars:
+            pve_maintenance_execute: false
+            pve_maintenance_pmxcfs_atomic_lock_validated: true
+
+        - name: Fail if mismatched host identity was accepted
+          ansible.builtin.fail:
+            msg: Mismatched PVE host identity was accepted
+      rescue:
+        - name: Read apt commands after hostname mismatch
+          ansible.builtin.slurp:
+            src: /run/pve-maintenance-test/apt-arguments
+          register: pve_maintenance_apt_after_hostname_mismatch
+
+        - name: Confirm hostname mismatch ran no APT command
+          ansible.builtin.assert:
+            that:
+              - >-
+                pve_maintenance_apt_after_hostname_mismatch.content ==
+                pve_maintenance_apt_before_hostname_mismatch.content
+      always:
+        - name: Remove hostname mismatch fixtures
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /run/pve-maintenance-test/hostname-mismatch
+            - /etc/pve/priv/.pve-maintenance.lock
+
+    - name: Verify each additional fail-closed preflight fixture
+      ansible.builtin.include_tasks: tasks/failure-case.yml
+      loop:
+        - name: no-quorum
+          path: /run/pve-maintenance-test/no-quorum
+        - name: offline-peer
+          path: /run/pve-maintenance-test/missing-peer
+        - name: dpkg-audit
+          path: /run/pve-maintenance-test/dpkg-audit
+        - name: pmxcfs
+          path: /run/pve-maintenance-test/bad-pmxcfs
+        - name: io-ct
+          path: /run/pve-maintenance-test/ct-down
+        - name: io-pbs-task
+          path: /run/pve-maintenance-test/pbs-task
+        - name: replication-failure
+          path: /run/pve-maintenance-test/replication-error
+        - name: replication-running
+          path: /run/pve-maintenance-test/replication-running
+        - name: failed-host-backup
+          path: /run/pve-maintenance-test/failed-backup
+        - name: stale-host-backup
+          path: /run/pve-maintenance-test/stale-backup
+        - name: required-service
+          path: /run/pve-maintenance-test/required-service-down
+        - name: active-apt-process
+          path: /run/pve-maintenance-test/apt-process-active
+        - name: install-timer-enabled
+          path: /run/pve-maintenance-test/install-timer-enabled
+        - name: package-download-enabled
+          path: /run/pve-maintenance-test/package-download-enabled
+      loop_control:
+        loop_var: pve_maintenance_failure_case
+
+    - name: Verify invalid PVE node is rejected
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/pve-maintenance/pve-maintenance-check
+          - preflight
+          - --node
+          - invalid
+          - --cluster-name
+          - jupiter
+          - --cluster-nodes
+          - europa,io
+          - --root-free-mb
+          - "1024"
+          - --boot-free-mb
+          - "256"
+          - --host-backup-max-age-hours
+          - "72"
+      register: pve_maintenance_invalid_node
+      changed_when: false
+      failed_when: false
+
+    - name: Confirm invalid PVE node is rejected
+      ansible.builtin.assert:
+        that:
+          - pve_maintenance_invalid_node.rc != 0
+
+    - name: Check PVE maintenance lock cleanup
+      ansible.builtin.stat:
+        path: /etc/pve/priv/.pve-maintenance.lock
+      register: pve_maintenance_remaining_lock
+
+    - name: Confirm PVE maintenance lock cleanup
+      ansible.builtin.assert:
+        that:
+          - not pve_maintenance_remaining_lock.stat.exists

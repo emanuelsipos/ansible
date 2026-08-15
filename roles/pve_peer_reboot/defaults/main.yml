@@ -1,0 +1,16 @@
+---
+# The local reboot timer is opt-in and independent of package installation.
+pve_peer_reboot_enabled: false
+pve_peer_reboot_pmxcfs_atomic_lock_validated: false
+pve_peer_reboot_cluster_name: jupiter
+pve_peer_reboot_cluster_nodes:
+  - europa
+  - io
+pve_peer_reboot_calendars:
+  europa: "Sat *-*-* 06:30:00"
+  io: "Sun *-*-* 06:30:00"
+pve_peer_reboot_randomized_delay: 10m
+pve_peer_reboot_host_backup_max_age_hours: 36
+pve_peer_reboot_script_path: /usr/local/sbin/pve-peer-reboot
+pve_peer_reboot_lock_path: /run/pve-peer-reboot.lock
+pve_peer_reboot_maintenance_lock_path: /etc/pve/priv/.pve-maintenance.lock

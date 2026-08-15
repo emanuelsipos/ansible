@@ -1,0 +1,11 @@
+[Unit]
+Description=Retry PVE cluster reboot-reservation recovery checks
+
+[Timer]
+OnBootSec=2m
+OnUnitInactiveSec=5m
+Persistent=false
+Unit=pve-peer-reboot-recovery.service
+
+[Install]
+WantedBy=timers.target

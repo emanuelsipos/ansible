@@ -1,0 +1,362 @@
+#!/bin/bash
+# Managed by Ansible role pve_maintenance. Do not run package changes here.
+
+set -euo pipefail
+
+readonly PROTECTED_PACKAGES=(
+    proxmox-ve pve-manager pve-cluster corosync qemu-server pve-container
+)
+readonly REQUIRED_SERVICES=(
+    pve-cluster.service corosync.service pvedaemon.service pveproxy.service
+    pvestatd.service
+)
+
+log() {
+    printf '%s\n' "pve-maintenance: $*"
+}
+
+fail() {
+    log "ERROR: $*"
+    exit 1
+}
+
+check_node_identity() {
+    local actual_node
+    actual_node=$(hostname --short) || fail "cannot read local hostname"
+    [[ "$actual_node" == "$NODE" ]] \
+        || fail "inventory node $NODE does not match local hostname $actual_node"
+}
+
+require_empty_output() {
+    local description=$1
+    shift
+    local output
+    output=$("$@") || fail "${description} command failed"
+    [[ -z "$output" ]] || fail "$description: $output"
+}
+
+check_pmxcfs() {
+    local target source fstype extra
+    read -r target source fstype extra < <(
+        findmnt --noheadings --output TARGET,SOURCE,FSTYPE --target /etc/pve
+    ) || fail "cannot inspect /etc/pve mount"
+    [[ -z "${extra:-}" && "$target" == /etc/pve && "$source" == /dev/fuse && "$fstype" == fuse ]] \
+        || fail "/etc/pve is not exactly the expected /dev/fuse fuse mount"
+}
+
+check_cluster() {
+    local status nodes cluster_name
+    status=$(pvecm status) || fail "pvecm status failed"
+    printf '%s\n' "$status"
+    cluster_name=$(awk -F: '$1 ~ /^[[:space:]]*Name[[:space:]]*$/ { sub(/^[[:space:]]+/, "", $2); print $2; exit }' <<<"$status")
+    [[ "$cluster_name" == "$CLUSTER_NAME" ]] \
+        || fail "cluster name is not ${CLUSTER_NAME}"
+    grep -Eq '^Quorate:[[:space:]]+Yes$' <<<"$status" || fail "cluster is not quorate"
+    grep -Eq '^Nodes:[[:space:]]+2$' <<<"$status" || fail "cluster does not report two nodes"
+    grep -Eq '^Expected votes:[[:space:]]+2$' <<<"$status" \
+        || fail "cluster does not have exactly two expected votes"
+    grep -Eq '^Total votes:[[:space:]]+2$' <<<"$status" \
+        || fail "cluster does not have exactly two total votes"
+    ! grep -Eqi 'qdevice' <<<"$status" || fail "QDevice is unexpectedly configured"
+    grep -Eq '^[[:space:]]*two_node:[[:space:]]*1[[:space:]]*$' /etc/pve/corosync.conf \
+        || fail "corosync two_node=1 is not configured"
+    nodes=$(pvesh get /cluster/status --output-format json) \
+        || fail "cannot read cluster node status"
+    CLUSTER_NODES="$CLUSTER_NODES" python3 -c '
+import json
+import os
+import sys
+
+expected = sorted(os.environ["CLUSTER_NODES"].split(","))
+entries = json.load(sys.stdin)
+actual = sorted(
+    entry.get("name", entry.get("node"))
+    for entry in entries
+    if entry.get("type") == "node" and entry.get("online") in (1, True, "1")
+)
+if actual != expected:
+    raise SystemExit(f"online cluster nodes are {actual!r}, expected {expected!r}")
+' <<<"$nodes"
+}
+
+check_no_active_cluster_tasks() {
+    local tasks
+    tasks=$(pvesh get /cluster/tasks --output-format json) \
+        || fail "cannot read cluster tasks"
+    python3 -c '
+import json
+import sys
+
+tasks = [
+    task for task in json.load(sys.stdin)
+    if task.get("endtime") is None
+]
+if tasks:
+    raise SystemExit(f"active PVE cluster tasks: {tasks!r}")
+' <<<"$tasks"
+}
+
+check_replication() {
+    local replication
+    replication=$(pvesh get "/nodes/${NODE}/replication" --output-format json) \
+        || fail "cannot read replication status"
+    python3 -c '
+import json
+import sys
+
+for entry in json.load(sys.stdin):
+    try:
+        failed = int(entry.get("fail_count", 0))
+    except (TypeError, ValueError):
+        raise SystemExit(f"invalid replication fail_count: {entry!r}")
+    if failed != 0:
+        raise SystemExit(f"replication has failures: {entry!r}")
+    for field in ("state", "status"):
+        value = entry.get(field)
+        if value is not None and str(value).strip().lower() in {"error", "running"}:
+            raise SystemExit(f"unsafe replication state: {entry!r}")
+' <<<"$replication"
+}
+
+check_apt_activity() {
+    local service timer_state
+    for service in apt-daily.service apt-daily-upgrade.service; do
+        systemctl is-active --quiet "$service" && fail "$service is active"
+    done
+    timer_state=$(systemctl is-enabled apt-daily-upgrade.timer 2>/dev/null || true)
+    [[ "$timer_state" == disabled ]] \
+        || fail "apt-daily-upgrade.timer is not disabled: ${timer_state:-unknown}"
+    if pgrep --exact apt >/dev/null || \
+        pgrep --full -- '(^|/)apt([[:space:]]|$)' >/dev/null || \
+        pgrep --full -- '(^|/)apt-get([[:space:]]|$)' >/dev/null || \
+        pgrep --exact dpkg >/dev/null || \
+        pgrep --full -- '(^|/)apt.systemd.daily([[:space:]]|$)' >/dev/null; then
+        fail "apt, dpkg, or automatic APT process is active"
+    fi
+}
+
+check_update_policy() {
+    local config setting
+    config=$(apt-config dump) || fail "cannot read effective APT policy"
+    for setting in \
+        'APT::Periodic::Update-Package-Lists "1";' \
+        'APT::Periodic::Download-Upgradeable-Packages "0";' \
+        'APT::Periodic::AutocleanInterval "0";'; do
+        grep -Fqx -- "$setting" <<<"$config" \
+            || fail "effective APT policy is missing: $setting"
+    done
+}
+
+check_host_backup() {
+    local age_seconds exit_timestamp exit_timestamp_epoch now result status
+    if systemctl is-active --quiet pve-host-backup.service; then
+        fail "pve-host-backup.service is active"
+    fi
+    result=$(systemctl show --property=Result --value pve-host-backup.service) \
+        || fail "cannot read pve-host-backup.service result"
+    status=$(systemctl show --property=ExecMainStatus --value pve-host-backup.service) \
+        || fail "cannot read pve-host-backup.service exit status"
+    [[ "$result" == success && "$status" == 0 ]] \
+        || fail "pve-host-backup.service last run did not succeed"
+    exit_timestamp=$(systemctl show --property=ExecMainExitTimestamp --value \
+        pve-host-backup.service) || fail "cannot read host-backup completion time"
+    [[ -n "$exit_timestamp" && "$exit_timestamp" != n/a ]] \
+        || fail "pve-host-backup.service has no completion time"
+    exit_timestamp_epoch=$(date --date="$exit_timestamp" +%s) \
+        || fail "cannot parse host-backup completion time"
+    now=$(date +%s)
+    age_seconds=$((now - exit_timestamp_epoch))
+    ((age_seconds >= 0 && age_seconds <= HOST_BACKUP_MAX_AGE_HOURS * 3600)) \
+        || fail "last successful host backup is too old"
+}
+
+check_free_space() {
+    local path threshold available
+    for path in / /boot; do
+        if [[ "$path" == / ]]; then
+            threshold=$ROOT_FREE_MB
+        else
+            threshold=$BOOT_FREE_MB
+        fi
+        available=$(df --portability --block-size=1M "$path" | awk 'NR == 2 { print $4 }')
+        [[ "$available" =~ ^[0-9]+$ && "$available" -ge "$threshold" ]] \
+            || fail "insufficient free space on $path: ${available:-unknown} MiB"
+    done
+}
+
+check_protected_packages() {
+    local package status holds
+    for package in "${PROTECTED_PACKAGES[@]}"; do
+        status=$(dpkg-query --show --showformat='${db:Status-Status}' "$package") \
+            || fail "required package is absent: $package"
+        [[ "$status" == installed ]] || fail "required package is not installed: $package"
+    done
+    holds=$(apt-mark showhold) || fail "cannot inspect held packages"
+    for package in "${PROTECTED_PACKAGES[@]}"; do
+        if grep -Fxq "$package" <<<"$holds"; then
+            fail "protected PVE package is held: $package"
+        fi
+    done
+}
+
+check_required_services() {
+    local service
+    for service in "${REQUIRED_SERVICES[@]}"; do
+        systemctl is-active --quiet "$service" || fail "required service is inactive: $service"
+    done
+}
+
+check_io_dependencies() {
+    [[ "$NODE" == io ]] || return 0
+    pct status 125 | grep -Eq '^status:[[:space:]]+running$' \
+        || fail "required Semaphore CT 125 is not running"
+    pct status 163 | grep -Eq '^status:[[:space:]]+running$' \
+        || fail "required PBS CT 163 is not running"
+    local tasks
+    tasks=$(pct exec 163 -- proxmox-backup-manager task list --output-format json) \
+        || fail "cannot read PBS task list from CT 163"
+    python3 -c '
+import json
+import sys
+
+tasks = json.load(sys.stdin)
+for task in tasks:
+    if str(task.get("status", "")).lower() == "running":
+        raise SystemExit(f"PBS has a running task: {task!r}")
+' <<<"$tasks"
+}
+
+capture_kernel_state() {
+    local packages package name version status kernel running newest_package="" newest_version="" newest_kernel=""
+    running=$(uname -r)
+    packages=$(dpkg-query --show --showformat='${Package}\t${Version}\t${db:Status-Status}\n' 'proxmox-kernel-*-pve-signed') \
+        || fail "cannot inspect installed signed PVE kernels"
+    while IFS=$'\t' read -r package version status; do
+        name=${package%%:*}
+        [[ "$name" == proxmox-kernel-*-pve-signed && "$status" == installed ]] || continue
+        if [[ -z "$newest_version" ]] || dpkg --compare-versions "$version" gt "$newest_version"; then
+            newest_package=$name
+            newest_version=$version
+            kernel=${name#proxmox-kernel-}
+            newest_kernel=${kernel%-signed}
+        fi
+    done <<<"$packages"
+    [[ -n "$newest_package" ]] || fail "no installed proxmox-kernel-*-pve-signed package found"
+    printf 'pve-maintenance: running_kernel=%s newest_kernel_package=%s newest_kernel_version=%s newest_kernel=%s reboot_required=%s kernel_differs=%s\n' \
+        "$running" "$newest_package" "$newest_version" "$newest_kernel" \
+        "$(test -e /var/run/reboot-required && printf yes || printf no)" \
+        "$(test "$running" != "$newest_kernel" && printf yes || printf no)"
+}
+
+record_failed_units() {
+    systemctl --failed --no-legend --plain | awk '{ print $1 }' | sort > /run/pve-maintenance/failed-units
+}
+
+check_failed_units_unchanged() {
+    local current new
+    current=$(mktemp)
+    systemctl --failed --no-legend --plain | awk '{ print $1 }' | sort >"$current"
+    new=$(comm -13 /run/pve-maintenance/failed-units "$current")
+    if [[ -n "$new" ]]; then
+        rm -f -- "$current"
+        fail "new failed systemd units were detected: $new"
+    fi
+    rm -f -- "$current"
+}
+
+simulation() {
+    local line
+    while IFS= read -r line; do
+        [[ "$line" =~ ^Remv[[:space:]]+([^[:space:]]+) ]] || continue
+        fail "simulation removes a package: $line"
+    done
+    log "simulation does not remove packages"
+}
+
+preflight_safety() {
+    check_pmxcfs
+    dpkg-query --show proxmox-ve >/dev/null || fail "proxmox-ve is not installed"
+    require_empty_output "dpkg audit is not clean" dpkg --audit
+    check_protected_packages
+    check_update_policy
+    check_cluster
+    check_apt_activity
+    check_no_active_cluster_tasks
+    check_host_backup
+    check_free_space
+    proxmox-boot-tool status
+    check_replication
+    check_required_services
+    check_io_dependencies
+}
+
+MODE=${1:-}
+shift || true
+NODE=""
+CLUSTER_NAME=""
+CLUSTER_NODES=""
+ROOT_FREE_MB=""
+BOOT_FREE_MB=""
+HOST_BACKUP_MAX_AGE_HOURS=""
+while (($#)); do
+    case "$1" in
+        --node) NODE=$2; shift 2 ;;
+        --cluster-name) CLUSTER_NAME=$2; shift 2 ;;
+        --cluster-nodes) CLUSTER_NODES=$2; shift 2 ;;
+        --root-free-mb) ROOT_FREE_MB=$2; shift 2 ;;
+        --boot-free-mb) BOOT_FREE_MB=$2; shift 2 ;;
+        --host-backup-max-age-hours) HOST_BACKUP_MAX_AGE_HOURS=$2; shift 2 ;;
+        *) fail "unknown argument: $1" ;;
+    esac
+done
+
+case "$MODE" in
+    pmxcfs)
+        check_pmxcfs
+        log "pmxcfs mount check passed"
+        ;;
+    simulation)
+        simulation
+        ;;
+    preflight)
+        [[ "$NODE" == europa || "$NODE" == io ]] || fail "unsupported PVE node: $NODE"
+        [[ "$CLUSTER_NODES" == 'europa,io' ]] || fail "unexpected cluster node set"
+        [[ "$HOST_BACKUP_MAX_AGE_HOURS" =~ ^[0-9]+$ ]] \
+            || fail "invalid host-backup maximum age"
+        check_node_identity
+        preflight_safety
+        pveversion
+        dpkg-query --show --showformat='${Package}\t${Version}\t${db:Status-Status}\n' 'proxmox-kernel-*-pve-signed'
+        capture_kernel_state
+        record_failed_units
+        systemctl --failed --no-legend --plain
+        log "preflight passed"
+        ;;
+    execute-preflight)
+        [[ "$NODE" == europa || "$NODE" == io ]] || fail "unsupported PVE node: $NODE"
+        [[ "$CLUSTER_NODES" == 'europa,io' ]] || fail "unexpected cluster node set"
+        [[ "$HOST_BACKUP_MAX_AGE_HOURS" =~ ^[0-9]+$ ]] \
+            || fail "invalid host-backup maximum age"
+        check_node_identity
+        preflight_safety
+        log "execute preflight passed"
+        ;;
+    postflight)
+        [[ "$NODE" == europa || "$NODE" == io ]] || fail "unsupported PVE node: $NODE"
+        [[ "$CLUSTER_NODES" == 'europa,io' ]] || fail "unexpected cluster node set"
+        check_node_identity
+        check_pmxcfs
+        require_empty_output "dpkg audit is not clean" dpkg --audit
+        check_cluster
+        check_required_services
+        check_failed_units_unchanged
+        proxmox-boot-tool status
+        pveversion
+        dpkg-query --show --showformat='${Package}\t${Version}\t${db:Status-Status}\n' 'proxmox-kernel-*-pve-signed'
+        capture_kernel_state
+        log "postflight passed; reboot is never initiated by this role"
+        ;;
+    *)
+        fail "usage: pve-maintenance-check {pmxcfs|preflight|execute-preflight|postflight|simulation}"
+        ;;
+esac

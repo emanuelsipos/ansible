@@ -1,0 +1,5 @@
+---
+- name: Converge PVE update policy
+  hosts: all
+  roles:
+    - role: pve_update_policy

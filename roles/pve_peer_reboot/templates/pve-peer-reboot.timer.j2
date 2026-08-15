@@ -1,0 +1,11 @@
+[Unit]
+Description=Staggered local PVE peer-aware reboot timer
+
+[Timer]
+OnCalendar={{ pve_peer_reboot_calendars[inventory_hostname] }}
+RandomizedDelaySec={{ pve_peer_reboot_randomized_delay }}
+Persistent=false
+Unit=pve-peer-reboot.service
+
+[Install]
+WantedBy=timers.target

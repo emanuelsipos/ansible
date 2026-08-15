@@ -1,0 +1,15 @@
+---
+# A run is report-only until this exact boolean is supplied as true.
+pve_maintenance_execute: false
+# Set true only after the documented real pmxcfs mkdir/rmdir validation.
+pve_maintenance_pmxcfs_atomic_lock_validated: false
+pve_maintenance_cluster_name: jupiter
+pve_maintenance_cluster_nodes:
+  - europa
+  - io
+pve_maintenance_lock_dir: /etc/pve/priv/.pve-maintenance.lock
+pve_maintenance_apt_lock_timeout: 120
+pve_maintenance_apt_timeout: 3600
+pve_maintenance_root_free_mb: 5120
+pve_maintenance_boot_free_mb: 1024
+pve_maintenance_host_backup_max_age_hours: 36

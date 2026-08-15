@@ -1,0 +1,9 @@
+---
+- name: Controlled single-node PVE maintenance
+  hosts: pve
+  gather_facts: true
+  any_errors_fatal: true
+  serial: 1
+  roles:
+    - role: pve_maintenance
+      tags: [pve, maintenance]

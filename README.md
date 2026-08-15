@@ -6,11 +6,13 @@ Production inventory and credentials are managed in Semaphore and are not stored
 
 ## Playbooks
 
-- `all-hosts`: unattended upgrades, log retention, zsh, Docker, host tuning,
-  encrypted PVE host backups, and backup tooling
+- `all-hosts`: unattended upgrades on non-PVE hosts, log retention, zsh,
+  Docker, host tuning, encrypted PVE host backups, and PVE update policy
 - `beszel`: Beszel agent installation and configuration
 - `komodo`: Komodo periphery and server configuration
 - `tailscale`: Tailscale installation and enrollment
+- `pve-maintenance`: single-node, report-first PVE `apt-get dist-upgrade`
+  maintenance; see its [runbook](playbooks/pve-maintenance/README.md)
 
 Reusable roles live under [`roles/`](roles/), including journald retention, zsh, sysctl configuration, zram, vzdump exclusions, and GitHub release downloads.
 
@@ -53,6 +55,15 @@ The `pve_host_backup` role is opt-in and fails closed when enabled without its
 per-node PBS token, encryption key, repository, namespace, and fingerprint.
 See [`roles/pve_host_backup/README.md`](roles/pve_host_backup/README.md) before
 deploying it.
+
+The unattended-upgrades role is explicitly excluded from PVE inventory hosts.
+PVE index refresh remains enabled without automatic package downloads or APT
+autoclean, and the base APT install-mode timer is disabled. Use only the
+controlled maintenance playbook for routine PVE updates.
+The market survey found no mature third-party role that replaces this PVE-
+specific safety policy, so the custom roles use official Ansible and PVE
+building blocks without additional dependencies. See the [Proxmox package
+repository and update documentation](https://pve.proxmox.com/pve-docs/pve-admin-guide.html#sysadmin_package_repositories).
 
 For local use, copy `hosts.example` to `hosts`, replace the example hosts, install the requirements for the playbook being run, and provide the same variables through your preferred secret store.
 

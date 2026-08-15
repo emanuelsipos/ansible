@@ -1,0 +1,127 @@
+---
+- name: Validate PVE peer reboot feature state
+  ansible.builtin.assert:
+    that:
+      - pve_peer_reboot_enabled is boolean
+    quiet: true
+    fail_msg: pve_peer_reboot_enabled must be a boolean
+  tags: [pve, reboot]
+
+- name: Validate PVE peer reboot recovery settings
+  ansible.builtin.assert:
+    that:
+      - pve_peer_reboot_pmxcfs_atomic_lock_validated is boolean
+      - pve_peer_reboot_cluster_name == 'jupiter'
+      - pve_peer_reboot_cluster_nodes | sort == ['europa', 'io']
+      - inventory_hostname in pve_peer_reboot_cluster_nodes
+      - pve_peer_reboot_host_backup_max_age_hours is integer
+      - pve_peer_reboot_host_backup_max_age_hours | int >= 24
+      - pve_peer_reboot_host_backup_max_age_hours | int <= 72
+      - pve_peer_reboot_script_path == '/usr/local/sbin/pve-peer-reboot'
+      - pve_peer_reboot_lock_path == '/run/pve-peer-reboot.lock'
+      - pve_peer_reboot_maintenance_lock_path == '/etc/pve/priv/.pve-maintenance.lock'
+    quiet: true
+    fail_msg: Refusing unsafe or non-canonical PVE peer-reboot recovery settings
+  tags: [pve, reboot]
+
+- name: Validate enabled PVE peer reboot request settings
+  ansible.builtin.assert:
+    that:
+      - pve_peer_reboot_calendars is mapping
+      - pve_peer_reboot_calendars.keys() | list | sort == ['europa', 'io']
+      - pve_peer_reboot_calendars.europa == 'Sat *-*-* 06:30:00'
+      - pve_peer_reboot_calendars.io == 'Sun *-*-* 06:30:00'
+      - pve_peer_reboot_randomized_delay == '10m'
+      - pve_peer_reboot_pmxcfs_atomic_lock_validated | bool
+    quiet: true
+    fail_msg: Refusing unsafe or non-canonical PVE peer-reboot request settings
+  when: pve_peer_reboot_enabled | bool
+  tags: [pve, reboot]
+
+- name: Install PVE peer reboot recovery script
+  ansible.builtin.template:
+    src: pve-peer-reboot.sh.j2
+    dest: "{{ pve_peer_reboot_script_path }}"
+    owner: root
+    group: root
+    mode: "0700"
+  tags: [pve, reboot]
+
+- name: Install PVE peer reboot recovery service
+  ansible.builtin.template:
+    src: pve-peer-reboot-recovery.service.j2
+    dest: /etc/systemd/system/pve-peer-reboot-recovery.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for PVE peer reboot
+  tags: [pve, reboot]
+
+- name: Install PVE peer reboot recovery timer
+  ansible.builtin.template:
+    src: pve-peer-reboot-recovery.timer.j2
+    dest: /etc/systemd/system/pve-peer-reboot-recovery.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for PVE peer reboot
+  tags: [pve, reboot]
+
+- name: Apply PVE peer reboot recovery units
+  ansible.builtin.meta: flush_handlers
+  tags: [pve, reboot]
+
+- name: Enable PVE peer reboot recovery timer
+  ansible.builtin.systemd_service:
+    name: pve-peer-reboot-recovery.timer
+    enabled: true
+    state: started
+  tags: [pve, reboot]
+
+- name: Inspect disabled PVE peer reboot timer
+  ansible.builtin.stat:
+    path: /etc/systemd/system/pve-peer-reboot.timer
+  register: pve_peer_reboot_disabled_timer
+  when: not (pve_peer_reboot_enabled | bool)
+  tags: [pve, reboot]
+
+- name: Disable local PVE peer reboot timer
+  ansible.builtin.systemd_service:
+    name: pve-peer-reboot.timer
+    enabled: false
+    state: stopped
+  when:
+    - not (pve_peer_reboot_enabled | bool)
+    - pve_peer_reboot_disabled_timer.stat.exists
+  tags: [pve, reboot]
+
+- name: Configure local PVE peer reboot mechanism
+  when: pve_peer_reboot_enabled | bool
+  tags: [pve, reboot]
+  block:
+    - name: Install PVE peer reboot service
+      ansible.builtin.template:
+        src: pve-peer-reboot.service.j2
+        dest: /etc/systemd/system/pve-peer-reboot.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd for PVE peer reboot
+
+    - name: Install PVE peer reboot timer
+      ansible.builtin.template:
+        src: pve-peer-reboot.timer.j2
+        dest: /etc/systemd/system/pve-peer-reboot.timer
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd for PVE peer reboot
+
+    - name: Apply PVE peer reboot request units
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable local PVE peer reboot timer
+      ansible.builtin.systemd_service:
+        name: pve-peer-reboot.timer
+        enabled: true
+        state: started

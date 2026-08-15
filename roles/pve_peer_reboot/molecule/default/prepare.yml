@@ -1,0 +1,227 @@
+---
+- name: Prepare PVE peer-reboot mocks
+  hosts: all
+  tasks:
+    - name: Create peer-reboot mock state directory
+      ansible.builtin.file:
+        path: /run/pve-peer-reboot-test
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Create fake pmxcfs directory
+      ansible.builtin.file:
+        path: /etc/pve
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Create fake pmxcfs private directory
+      ansible.builtin.file:
+        path: /etc/pve/priv
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Remove host reboot-needed fixture before no-op testing
+      ansible.builtin.file:
+        path: /var/run/reboot-required
+        state: absent
+
+    - name: Create fake corosync configuration
+      ansible.builtin.copy:
+        content: |
+          quorum {
+            two_node: 1
+          }
+        dest: /etc/pve/corosync.conf
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Install PVE peer-reboot command mocks
+      ansible.builtin.copy:
+        content: |
+          #!/bin/bash
+          set -euo pipefail
+          command=$(basename "$0")
+          case "$command" in
+              hostname)
+                  printf '%s\n' "${PVE_REBOOT_TEST_NODE:-io}"
+                  ;;
+              findmnt)
+                  if [[ -e /run/pve-peer-reboot-test/bad-pmxcfs ]]; then
+                      printf '%s\n' '/etc/pve /dev/sda1 ext4'
+                  else
+                      printf '%s\n' '/etc/pve /dev/fuse fuse'
+                  fi
+                  ;;
+              pvecm)
+                  if [[ -e /run/pve-peer-reboot-test/no-quorum ]]; then
+                      printf '%s\n' 'Name: jupiter' 'Nodes: 2' 'Expected votes: 2' 'Total votes: 2' 'Quorate: No'
+                  else
+                      printf '%s\n' 'Name: jupiter' 'Nodes: 2' 'Expected votes: 2' 'Total votes: 2' 'Quorate: Yes'
+                  fi
+                  ;;
+              pvesh)
+                  if [[ "$*" == *'/cluster/status'* ]]; then
+                      if [[ -e /run/pve-peer-reboot-test/missing-peer ]]; then
+                          printf '%s\n' '[{"type":"node","name":"io","online":1}]'
+                      else
+                          printf '%s\n' \
+                              '[{"type":"node","name":"io","online":1},' \
+                              '{"type":"node","name":"europa","online":1}]'
+                      fi
+                  elif [[ "$*" == *'/cluster/tasks'* ]]; then
+                      if [[ -e /run/pve-peer-reboot-test/active-task ]]; then
+                          printf '%s\n' '[{"status":"OK","upid":"UPID:active"}]'
+                      else
+                          printf '%s\n' '[{"type":"vncproxy","status":"running","endtime":1}]'
+                      fi
+                  elif [[ "$*" == *'/replication'* ]]; then
+                      if [[ -e /run/pve-peer-reboot-test/replication-error ]]; then
+                          printf '%s\n' '[{"fail_count":1,"last_sync":1,"last_try":1,"next_sync":2}]'
+                      elif [[ -e /run/pve-peer-reboot-test/replication-running ]]; then
+                          printf '%s\n' '[{"fail_count":0,"status":"running"}]'
+                      else
+                          printf '%s\n' \
+                              '[{"fail_count":0,"last_sync":1,"last_try":1,"next_sync":2}]'
+                      fi
+                  else
+                      exit 2
+                  fi
+                  ;;
+              pct)
+                  case "$1" in
+                      list)
+                          [[ -e /run/pve-peer-reboot-test/pct-list-fail ]] && exit 3
+                          printf '%s\n' 'VMID Status Lock Name' '125 running - semaphore' '163 running - pbs'
+                          ;;
+                      config) printf '%s\n' "onboot: ${PVE_REBOOT_TEST_ONBOOT:-1}" ;;
+                      status)
+                          if [[ -e /run/pve-peer-reboot-test/ct-down ]]; then
+                              printf '%s\n' 'status: stopped'
+                          else
+                              printf '%s\n' 'status: running'
+                          fi
+                          ;;
+                      exec)
+                          if [[ -e /run/pve-peer-reboot-test/pbs-task ]]; then
+                              printf '%s\n' '[{"status":"running"}]'
+                          else
+                              printf '%s\n' '[]'
+                          fi
+                          ;;
+                  esac
+                  ;;
+              qm)
+                  if [[ "$1" == list ]]; then
+                      [[ -e /run/pve-peer-reboot-test/qm-list-fail ]] && exit 3
+                      printf '%s\n' 'VMID NAME STATUS MEM(MB)' '100 guest running 512'
+                  elif [[ "$1" == status ]]; then
+                      printf '%s\n' 'status: running'
+                  else
+                      printf '%s\n' "onboot: ${PVE_REBOOT_TEST_ONBOOT:-1}"
+                  fi
+                  ;;
+              systemctl)
+                  if [[ "${PVE_REBOOT_TEST_MODE:-}" != 1 ]]; then
+                      exec /usr/bin/systemctl "$@"
+                  fi
+                  if [[ "$1" == is-active ]]; then
+                      case "${@: -1}" in
+                          pve-cluster.service|corosync.service|pvedaemon.service|pveproxy.service|pvestatd.service)
+                              [[ -e /run/pve-peer-reboot-test/required-service-down ]] && exit 3
+                              exit 0
+                              ;;
+                      esac
+                      if [[ -e /run/pve-peer-reboot-test/host-backup-active ]] && \
+                          [[ "${@: -1}" == pve-host-backup.service ]]; then
+                          exit 0
+                      fi
+                      exit 3
+                  fi
+                  if [[ "$1" == show ]]; then
+                      case "$*" in
+                          *ExecMainExitTimestamp*)
+                              if [[ -e /run/pve-peer-reboot-test/stale-backup ]]; then
+                                  date --date='4 days ago' --iso-8601=seconds
+                              else
+                                  date --iso-8601=seconds
+                              fi
+                              ;;
+                          *ExecMainStatus*)
+                              [[ -e /run/pve-peer-reboot-test/failed-backup ]] \
+                                  && printf '%s\n' 1 || printf '%s\n' 0
+                              ;;
+                          *Result*)
+                              [[ -e /run/pve-peer-reboot-test/failed-backup ]] \
+                                  && printf '%s\n' failed || printf '%s\n' success
+                              ;;
+                          *) exit 2 ;;
+                      esac
+                      exit 0
+                  fi
+                  if [[ "$1" == reboot ]]; then
+                      printf '%s\n' reboot >>/run/pve-peer-reboot-test/reboot
+                      if [[ -e /run/pve-peer-reboot-test/reboot-sigterm ]]; then
+                          kill -TERM "$PPID"
+                          sleep 1
+                      fi
+                      [[ -e /run/pve-peer-reboot-test/reboot-fail ]] && exit 1
+                      exit 0
+                  fi
+                  ;;
+              pgrep)
+                  [[ -e /run/pve-peer-reboot-test/apt-active ]] && exit 0
+                  exit 1
+                  ;;
+              dpkg-query)
+                  if [[ -e /run/pve-peer-reboot-test/newer-kernel ]]; then
+                      printf '%b\n' \
+                          'proxmox-kernel-6.14.0-0-pve-signed\t6.14.0-0\tinstalled' \
+                          'proxmox-kernel-6.14.0-10-pve-signed\t6.14.0-10\tinstalled'
+                  else
+                      printf '%b\n' 'proxmox-kernel-6.14.0-0-pve-signed\t6.14.0-0\tinstalled'
+                  fi
+                  ;;
+              dpkg)
+                  if [[ "$1" == --compare-versions ]]; then
+                      exec /usr/bin/dpkg "$@"
+                  fi
+                  if [[ "$1" == --audit ]]; then
+                      [[ -e /run/pve-peer-reboot-test/dpkg-audit ]] \
+                          && printf '%s\n' 'package is only half configured'
+                      exit 0
+                  fi
+                  ;;
+              uname)
+                  printf '%s\n' "${PVE_REBOOT_TEST_KERNEL:-6.14.0-0-pve}"
+                  ;;
+              logger)
+                  :
+                  ;;
+              *)
+                  exit 2
+                  ;;
+          esac
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - dpkg
+        - dpkg-query
+        - findmnt
+        - hostname
+        - logger
+        - pct
+        - pgrep
+        - pvecm
+        - pvesh
+        - qm
+        - systemctl
+        - uname

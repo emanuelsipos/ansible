@@ -1,0 +1,324 @@
+#!/bin/bash
+# Managed by Ansible role pve_peer_reboot. This script never migrates guests.
+
+set -euo pipefail
+umask 077
+
+readonly CLUSTER_NAME={{ pve_peer_reboot_cluster_name | quote }}
+readonly CLUSTER_NODES={{ pve_peer_reboot_cluster_nodes | join(',') | quote }}
+readonly LOCAL_LOCK={{ pve_peer_reboot_lock_path | quote }}
+readonly MAINTENANCE_LOCK={{ pve_peer_reboot_maintenance_lock_path | quote }}
+readonly HOST_BACKUP_MAX_AGE_HOURS={{ pve_peer_reboot_host_backup_max_age_hours | int }}
+KEEP_CLUSTER_LOCK=false
+
+log() {
+    logger --tag pve-peer-reboot -- "$*" 2>/dev/null || true
+    printf '%s\n' "pve-peer-reboot: $*"
+}
+
+fail() {
+    log "ERROR: $*"
+    exit 1
+}
+
+release_cluster_lock() {
+    [[ "$KEEP_CLUSTER_LOCK" == false ]] || return 0
+    [[ -d "$MAINTENANCE_LOCK" ]] || return 0
+    [[ -f "$MAINTENANCE_LOCK/owner" ]] || return 0
+    [[ "$(<"$MAINTENANCE_LOCK/owner")" == "reboot:${NODE}" ]] || return 0
+    rm -f -- "$MAINTENANCE_LOCK/running-vms" "$MAINTENANCE_LOCK/running-cts" \
+        "$MAINTENANCE_LOCK/boot-id" "$MAINTENANCE_LOCK/owner"
+    rmdir -- "$MAINTENANCE_LOCK" || \
+        log "ERROR: failed to release cluster lock: $MAINTENANCE_LOCK"
+}
+
+check_pmxcfs() {
+    local target source fstype extra
+    read -r target source fstype extra < <(
+        findmnt --noheadings --output TARGET,SOURCE,FSTYPE --target /etc/pve
+    ) || fail "cannot inspect /etc/pve mount"
+    [[ -z "${extra:-}" && "$target" == /etc/pve && "$source" == /dev/fuse && "$fstype" == fuse ]] \
+        || fail "/etc/pve is not exactly the expected /dev/fuse fuse mount"
+}
+
+check_cluster() {
+    local status nodes cluster_name
+    status=$(pvecm status) || fail "pvecm status failed"
+    cluster_name=$(awk -F: '$1 ~ /^[[:space:]]*Name[[:space:]]*$/ { sub(/^[[:space:]]+/, "", $2); print $2; exit }' <<<"$status")
+    [[ "$cluster_name" == "$CLUSTER_NAME" ]] \
+        || fail "cluster name is not ${CLUSTER_NAME}"
+    grep -Eq '^Quorate:[[:space:]]+Yes$' <<<"$status" || fail "cluster is not quorate"
+    grep -Eq '^Nodes:[[:space:]]+2$' <<<"$status" || fail "cluster does not report two nodes"
+    grep -Eq '^Expected votes:[[:space:]]+2$' <<<"$status" \
+        || fail "cluster does not have exactly two expected votes"
+    grep -Eq '^Total votes:[[:space:]]+2$' <<<"$status" \
+        || fail "cluster does not have exactly two total votes"
+    ! grep -Eqi 'qdevice' <<<"$status" || fail "QDevice is unexpectedly configured"
+    grep -Eq '^[[:space:]]*two_node:[[:space:]]*1[[:space:]]*$' /etc/pve/corosync.conf \
+        || fail "corosync two_node=1 is not configured"
+    nodes=$(pvesh get /cluster/status --output-format json) \
+        || fail "cannot read cluster node status"
+    env CLUSTER_NODES="$CLUSTER_NODES" python3 -c '
+import json
+import os
+import sys
+
+expected = sorted(os.environ["CLUSTER_NODES"].split(","))
+actual = sorted(
+    entry.get("name", entry.get("node"))
+    for entry in json.load(sys.stdin)
+    if entry.get("type") == "node" and entry.get("online") in (1, True, "1")
+)
+if actual != expected:
+    raise SystemExit(f"online cluster nodes are {actual!r}, expected {expected!r}")
+' <<<"$nodes" || fail "cluster peer is not online"
+}
+
+check_no_active_tasks() {
+    local tasks
+    tasks=$(pvesh get /cluster/tasks --output-format json) \
+        || fail "cannot read cluster tasks"
+    python3 -c '
+import json
+import sys
+
+tasks = [
+    task for task in json.load(sys.stdin)
+    if task.get("endtime") is None
+]
+if tasks:
+    raise SystemExit(f"active PVE cluster tasks: {tasks!r}")
+' <<<"$tasks" || fail "PVE cluster has active tasks"
+}
+
+check_replication() {
+    local replication
+    replication=$(pvesh get "/nodes/${NODE}/replication" --output-format json) \
+        || fail "cannot read replication status"
+    python3 -c '
+import json
+import sys
+
+for entry in json.load(sys.stdin):
+    try:
+        failed = int(entry.get("fail_count", 0))
+    except (TypeError, ValueError):
+        raise SystemExit(f"invalid replication fail_count: {entry!r}")
+    if failed != 0:
+        raise SystemExit(f"replication has failures: {entry!r}")
+    for field in ("state", "status"):
+        value = entry.get(field)
+        if value is not None and str(value).strip().lower() in {"error", "running"}:
+            raise SystemExit(f"unsafe replication state: {entry!r}")
+' <<<"$replication" || fail "replication is running or unhealthy"
+}
+
+check_apt_activity() {
+    local service
+    for service in apt-daily.service apt-daily-upgrade.service; do
+        systemctl is-active --quiet "$service" && fail "$service is active"
+    done
+    if pgrep --exact apt >/dev/null || \
+        pgrep --full -- '(^|/)apt([[:space:]]|$)' >/dev/null || \
+        pgrep --full -- '(^|/)apt-get([[:space:]]|$)' >/dev/null || \
+        pgrep --exact dpkg >/dev/null || \
+        pgrep --full -- '(^|/)apt.systemd.daily([[:space:]]|$)' >/dev/null; then
+        fail "apt, dpkg, or automatic APT process is active"
+    fi
+}
+
+check_required_services() {
+    local service
+    for service in \
+        pve-cluster.service corosync.service pvedaemon.service pveproxy.service \
+        pvestatd.service; do
+        systemctl is-active --quiet "$service" || fail "required service is inactive: $service"
+    done
+}
+
+check_dpkg() {
+    local audit
+    audit=$(dpkg --audit) || fail "dpkg audit command failed"
+    [[ -z "$audit" ]] || fail "dpkg audit is not clean: $audit"
+}
+
+check_host_backup() {
+    local age_seconds exit_timestamp exit_timestamp_epoch now result status
+    systemctl is-active --quiet pve-host-backup.service \
+        && fail "pve-host-backup.service is active"
+    result=$(systemctl show --property=Result --value pve-host-backup.service) \
+        || fail "cannot read pve-host-backup.service result"
+    status=$(systemctl show --property=ExecMainStatus --value pve-host-backup.service) \
+        || fail "cannot read pve-host-backup.service exit status"
+    [[ "$result" == success && "$status" == 0 ]] \
+        || fail "pve-host-backup.service last run did not succeed"
+    exit_timestamp=$(systemctl show --property=ExecMainExitTimestamp --value \
+        pve-host-backup.service) || fail "cannot read host-backup completion time"
+    [[ -n "$exit_timestamp" && "$exit_timestamp" != n/a ]] \
+        || fail "pve-host-backup.service has no completion time"
+    exit_timestamp_epoch=$(date --date="$exit_timestamp" +%s) \
+        || fail "cannot parse host-backup completion time"
+    now=$(date +%s)
+    age_seconds=$((now - exit_timestamp_epoch))
+    ((age_seconds >= 0 && age_seconds <= HOST_BACKUP_MAX_AGE_HOURS * 3600)) \
+        || fail "last successful host backup is too old"
+}
+
+check_local_guest_onboot() {
+    local guest running_vms running_cts vms cts
+    vms=$(qm list --full) || fail "qm list --full failed"
+    running_vms=$(awk 'NR > 1 && $3 == "running" { print $1 }' <<<"$vms")
+    while read -r guest; do
+        [[ -z "$guest" ]] && continue
+        qm config "$guest" | grep -Eq '^onboot:[[:space:]]+1$' \
+            || fail "running VM $guest does not have onboot=1"
+    done <<<"$running_vms"
+    cts=$(pct list) || fail "pct list failed"
+    running_cts=$(awk 'NR > 1 && $2 == "running" { print $1 }' <<<"$cts")
+    while read -r guest; do
+        [[ -z "$guest" ]] && continue
+        pct config "$guest" | grep -Eq '^onboot:[[:space:]]+1$' \
+            || fail "running CT $guest does not have onboot=1"
+    done <<<"$running_cts"
+}
+
+check_io_dependencies() {
+    [[ "$NODE" == io ]] || return 0
+    pct status 125 | grep -Eq '^status:[[:space:]]+running$' \
+        || fail "required Semaphore CT 125 is not running"
+    pct status 163 | grep -Eq '^status:[[:space:]]+running$' \
+        || fail "required PBS CT 163 is not running"
+    local tasks
+    tasks=$(pct exec 163 -- proxmox-backup-manager task list --output-format json) \
+        || fail "cannot read PBS task list from CT 163"
+    python3 -c '
+import json
+import sys
+
+for task in json.load(sys.stdin):
+    if str(task.get("status", "")).lower() == "running":
+        raise SystemExit(f"PBS has a running task: {task!r}")
+' <<<"$tasks" || fail "PBS has a running task"
+}
+
+record_running_guests() {
+    qm list --full | awk 'NR > 1 && $3 == "running" { print $1 }' \
+        >"$MAINTENANCE_LOCK/running-vms"
+    pct list | awk 'NR > 1 && $2 == "running" { print $1 }' \
+        >"$MAINTENANCE_LOCK/running-cts"
+}
+
+check_recorded_guests_recovered() {
+    local guest
+    while read -r guest; do
+        [[ -z "$guest" ]] && continue
+        qm status "$guest" | grep -Eq '^status:[[:space:]]+running$' \
+            || fail "VM $guest has not recovered after reboot"
+    done <"$MAINTENANCE_LOCK/running-vms"
+    while read -r guest; do
+        [[ -z "$guest" ]] && continue
+        pct status "$guest" | grep -Eq '^status:[[:space:]]+running$' \
+            || fail "CT $guest has not recovered after reboot"
+    done <"$MAINTENANCE_LOCK/running-cts"
+}
+
+recover_cluster_lock() {
+    local owner previous_boot_id
+    [[ -d "$MAINTENANCE_LOCK" ]] || return 0
+    [[ -f "$MAINTENANCE_LOCK/owner" ]] || fail "cluster lock has no owner marker"
+    owner=$(<"$MAINTENANCE_LOCK/owner")
+    [[ "$owner" == "reboot:${PEER}" ]] && return 0
+    [[ "$owner" == "reboot:${NODE}" ]] || fail "cluster lock has invalid owner marker: $owner"
+    check_pmxcfs
+    [[ -f "$MAINTENANCE_LOCK/running-vms" && \
+       -f "$MAINTENANCE_LOCK/running-cts" && \
+       -f "$MAINTENANCE_LOCK/boot-id" ]] \
+        || fail "local reboot reservation has incomplete guest state"
+    previous_boot_id=$(<"$MAINTENANCE_LOCK/boot-id")
+    [[ -n "$previous_boot_id" && "$(</proc/sys/kernel/random/boot_id)" != "$previous_boot_id" ]] \
+        || fail "local boot ID has not changed since the reboot reservation"
+    check_cluster
+    check_required_services
+    check_recorded_guests_recovered
+    KEEP_CLUSTER_LOCK=false
+    release_cluster_lock
+    [[ ! -e "$MAINTENANCE_LOCK" ]] || fail "cluster reboot reservation remains"
+    log "local node and guests recovered; cluster reboot reservation released"
+}
+
+newest_kernel() {
+    local packages package version status name kernel newest_version="" newest_kernel=""
+    packages=$(dpkg-query --show --showformat='${Package}\t${Version}\t${db:Status-Status}\n' 'proxmox-kernel-*-pve-signed') \
+        || fail "cannot inspect installed signed PVE kernels"
+    while IFS=$'\t' read -r package version status; do
+        name=${package%%:*}
+        [[ "$name" == proxmox-kernel-*-pve-signed && "$status" == installed ]] || continue
+        if [[ -z "$newest_version" ]] || dpkg --compare-versions "$version" gt "$newest_version"; then
+            newest_version=$version
+            kernel=${name#proxmox-kernel-}
+            newest_kernel=${kernel%-signed}
+        fi
+    done <<<"$packages"
+    [[ -n "$newest_kernel" ]] || fail "no installed signed PVE kernel was found"
+    printf '%s\n' "$newest_kernel"
+}
+
+NODE=$(hostname --short)
+case "$NODE" in
+    europa) PEER=io ;;
+    io) PEER=europa ;;
+    *) fail "unsupported PVE node: $NODE" ;;
+esac
+
+exec 9>"$LOCAL_LOCK"
+flock --exclusive --nonblock 9 || fail "another local peer-reboot check is running"
+
+if [[ "${1:-}" == recover ]]; then
+    recover_cluster_lock
+    exit 0
+fi
+[[ $# -eq 0 ]] || fail "usage: pve-peer-reboot [recover]"
+
+RUNNING_KERNEL=$(uname -r)
+NEWEST_KERNEL=$(newest_kernel)
+if [[ ! -e /var/run/reboot-required && "$RUNNING_KERNEL" == "$NEWEST_KERNEL" ]]; then
+    log "no reboot needed: running kernel matches newest signed PVE kernel"
+    exit 0
+fi
+
+log "reboot is needed; running kernel=$RUNNING_KERNEL newest signed kernel=$NEWEST_KERNEL peer=$PEER"
+check_pmxcfs
+check_cluster
+check_no_active_tasks
+check_apt_activity
+check_dpkg
+check_host_backup
+check_replication
+check_required_services
+check_local_guest_onboot
+check_io_dependencies
+
+mkdir --mode=0700 -- "$MAINTENANCE_LOCK" \
+    || fail "PVE maintenance or reboot lock exists: $MAINTENANCE_LOCK"
+trap release_cluster_lock EXIT
+printf 'reboot:%s\n' "$NODE" >"$MAINTENANCE_LOCK/owner"
+cp -- /proc/sys/kernel/random/boot_id "$MAINTENANCE_LOCK/boot-id"
+record_running_guests
+
+# Close the health-check race after claiming the cluster-wide reservation.
+check_cluster
+check_no_active_tasks
+check_apt_activity
+check_dpkg
+check_host_backup
+check_replication
+check_required_services
+check_local_guest_onboot
+check_io_dependencies
+
+KEEP_CLUSTER_LOCK=true
+log "all peer-aware reboot checks passed; requesting local system reboot"
+if ! systemctl reboot; then
+    KEEP_CLUSTER_LOCK=false
+    fail "systemctl reboot failed"
+fi

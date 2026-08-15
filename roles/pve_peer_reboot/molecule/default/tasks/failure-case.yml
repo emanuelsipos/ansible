@@ -1,0 +1,27 @@
+---
+- name: Create peer-reboot failure fixture for {{ pve_peer_reboot_failure_case.name }}
+  ansible.builtin.file:
+    path: "{{ pve_peer_reboot_failure_case.path }}"
+    state: touch
+    mode: "0600"
+
+- name: Run peer reboot failure for {{ pve_peer_reboot_failure_case.name }}
+  ansible.builtin.command:
+    argv:
+      - /usr/local/sbin/pve-peer-reboot
+  environment:
+    PVE_REBOOT_TEST_NODE: "{{ inventory_hostname }}"
+    PVE_REBOOT_TEST_MODE: "1"
+  register: pve_peer_reboot_failure_result
+  changed_when: false
+  failed_when: false
+
+- name: Remove peer-reboot failure fixture for {{ pve_peer_reboot_failure_case.name }}
+  ansible.builtin.file:
+    path: "{{ pve_peer_reboot_failure_case.path }}"
+    state: absent
+
+- name: Confirm reboot failure blocks {{ pve_peer_reboot_failure_case.name }}
+  ansible.builtin.assert:
+    that:
+      - pve_peer_reboot_failure_result.rc != 0
