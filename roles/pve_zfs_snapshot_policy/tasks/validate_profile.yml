@@ -1,0 +1,27 @@
+---
+- name: Validate snapshot profile tier keys
+  ansible.builtin.assert:
+    that:
+      - >-
+        pve_zfs_snapshot_policy_profile.key
+        is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - pve_zfs_snapshot_policy_profile.value is mapping
+      - >-
+        pve_zfs_snapshot_policy_profile.value.keys() | list | sort ==
+        pve_zfs_snapshot_policy_tiers.keys() | list | sort
+    quiet: true
+    fail_msg: >-
+      Snapshot profile {{ pve_zfs_snapshot_policy_profile.key }} must define
+      every configured tier and no unknown tiers
+
+- name: Validate snapshot profile tier values
+  ansible.builtin.assert:
+    that:
+      - item.value is boolean
+    quiet: true
+    fail_msg: >-
+      Snapshot profile {{ pve_zfs_snapshot_policy_profile.key }} tier
+      {{ item.key }} must be boolean
+  loop: "{{ pve_zfs_snapshot_policy_profile.value | dict2items }}"
+  loop_control:
+    label: "{{ pve_zfs_snapshot_policy_profile.key }}.{{ item.key }}"

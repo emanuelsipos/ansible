@@ -93,6 +93,8 @@
       tags: [zram]
     - role: pve_resource_scheduling
       tags: [scrub]
+    - role: pve_zfs_snapshot_policy
+      tags: [snapshots]
     - role: brianhartsock.smartmontools
       tags: [smart]
     - role: vzdump

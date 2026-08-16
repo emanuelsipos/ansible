@@ -1,0 +1,40 @@
+---
+- name: Converge
+  hosts: all
+  vars:
+    pve_zfs_snapshot_policy_tiers:
+      frequent: {schedule: "*/15 * * * *", keep: 4}
+      hourly: {schedule: "17 * * * *", keep: 24}
+      daily: {schedule: "25 3 * * *", keep: 7}
+      weekly: {schedule: "47 3 * * 0", keep: 4}
+      monthly: {schedule: "52 3 1 * *", keep: 3}
+    pve_zfs_snapshot_policy_profiles:
+      disabled:
+        {frequent: false, hourly: false, daily: false, weekly: false, monthly: false}
+      host_root:
+        {frequent: false, hourly: true, daily: true, weekly: true, monthly: true}
+      guest:
+        {frequent: true, hourly: true, daily: false, weekly: false, monthly: false}
+      bulk:
+        {frequent: false, hourly: false, daily: true, weekly: true, monthly: false}
+      app:
+        {frequent: true, hourly: true, daily: true, weekly: true, monthly: true}
+    pve_zfs_snapshot_policy_common_datasets:
+      rpool: disabled
+      rpool/ROOT: disabled
+      rpool/ROOT/pve-1: host_root
+      rpool/data: guest
+      rpool/var-lib-vz: disabled
+    pve_zfs_snapshot_policy_host_datasets:
+      io:
+        data: bulk
+        data/proxmox: disabled
+        data2: bulk
+        data3: bulk
+        data3/frigate: disabled
+        data3/karakeep: app
+        data3/proxmox: disabled
+        data3/proxmox-backup-server: disabled
+    pve_zfs_snapshot_policy_prune_schedule: "10 4 * * *"
+  roles:
+    - role: pve_zfs_snapshot_policy

@@ -1,0 +1,213 @@
+---
+- name: Prepare ZFS snapshot policy mocks
+  hosts: all
+  tasks:
+    - name: Create snapshot policy mock state
+      ansible.builtin.file:
+        path: /run/pve-zfs-snapshot-policy-test/properties
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Seed common ZFS datasets
+      ansible.builtin.copy:
+        dest: /run/pve-zfs-snapshot-policy-test/datasets
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          rpool
+          rpool/ROOT
+          rpool/ROOT/pve-1
+          rpool/data
+          rpool/data/subvol-100-disk-0
+          rpool/var-lib-vz
+
+    - name: Add io-specific ZFS datasets
+      ansible.builtin.lineinfile:
+        path: /run/pve-zfs-snapshot-policy-test/datasets
+        line: "{{ item }}"
+      loop:
+        - data
+        - data/proxmox
+        - data2
+        - data3
+        - data3/frigate
+        - data3/karakeep
+        - data3/proxmox
+        - data3/proxmox-backup-server
+      when: inventory_hostname == 'io'
+
+    - name: Seed snapshot fixtures
+      ansible.builtin.copy:
+        dest: /run/pve-zfs-snapshot-policy-test/snapshots
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          rpool/ROOT/pve-1@zfs-auto-snap_hourly-01 101
+          rpool/ROOT/pve-1@zfs-auto-snap_hourly-02 102
+          rpool/data/subvol-100-disk-0@zfs-auto-snap_frequent-01 101
+          rpool/data/subvol-100-disk-0@zfs-auto-snap_frequent-02 102
+          rpool/data/subvol-100-disk-0@zfs-auto-snap_frequent-03 103
+          rpool/data/subvol-100-disk-0@zfs-auto-snap_frequent-04 104
+          rpool/data/subvol-100-disk-0@zfs-auto-snap_frequent-05 105
+          rpool/data/subvol-100-disk-0@zfs-auto-snap_daily-01 106
+          rpool/data/subvol-100-disk-0@__replicate_100-0_100__ 107
+          rpool/data/subvol-100-disk-0@manual-recovery 108
+
+    - name: Add io-specific snapshot fixtures
+      ansible.builtin.lineinfile:
+        path: /run/pve-zfs-snapshot-policy-test/snapshots
+        line: "{{ item }}"
+      loop:
+        - data@zfs-auto-snap_daily-01 101
+        - data@zfs-auto-snap_daily-02 102
+        - data@zfs-auto-snap_daily-03 103
+        - data@zfs-auto-snap_daily-04 104
+        - data@zfs-auto-snap_daily-05 105
+        - data@zfs-auto-snap_daily-06 106
+        - data@zfs-auto-snap_daily-07 107
+        - data@zfs-auto-snap_daily-08 108
+        - data@zfs-auto-snap_monthly-01 109
+        - data3/frigate@zfs-auto-snap_hourly-01 110
+        - data3/karakeep@zfs-auto-snap_monthly-01 111
+        - data3/karakeep@zfs-auto-snap_monthly-02 112
+        - data3/karakeep@zfs-auto-snap_monthly-03 113
+        - data3/karakeep@zfs-auto-snap_monthly-04 114
+      when: inventory_hostname == 'io'
+
+    - name: Install mock zfs command
+      ansible.builtin.copy:
+        dest: /usr/sbin/zfs
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          set -euo pipefail
+          readonly STATE=/run/pve-zfs-snapshot-policy-test
+
+          property_path() {
+              printf '%s/properties/%s--%s' "$STATE" \
+                  "$(tr '/:' '__' <<<"$1")" "$(tr '/:' '__' <<<"$2")"
+          }
+
+          effective_property() {
+              local dataset=$1
+              local property=$2
+              local path
+
+              while true; do
+                  path=$(property_path "$dataset" "$property")
+                  if [[ -e "$path" ]]; then
+                      cat "$path"
+                      return
+                  fi
+                  [[ "$dataset" == */* ]] || break
+                  dataset=${dataset%/*}
+              done
+              printf '%s\n' -
+          }
+
+          case "${1:-}" in
+              list)
+                  if [[ "$*" == *"-t snapshot"* ]]; then
+                      awk '{ print $1 "\t" $2 }' "$STATE/snapshots"
+                  else
+                      dataset=${@: -1}
+                      grep -Fx -- "$dataset" "$STATE/datasets"
+                  fi
+                  ;;
+              get)
+                  output=value
+                  for argument in "$@"; do
+                      [[ "$argument" == source ]] && output=source
+                  done
+                  property=${@: -2:1}
+                  dataset=${@: -1}
+                  path=$(property_path "$dataset" "$property")
+                  if [[ "$output" == source ]]; then
+                      [[ -e "$path" ]] && printf '%s\n' local || printf '%s\n' -
+                  else
+                      effective_property "$dataset" "$property"
+                  fi
+                  ;;
+              set)
+                  assignment=${2:?assignment is required}
+                  dataset=${3:?dataset is required}
+                  property=${assignment%%=*}
+                  value=${assignment#*=}
+                  printf '%s\n' "$value" >"$(property_path "$dataset" "$property")"
+                  printf 'set\t%s\t%s\t%s\n' "$dataset" "$property" "$value" \
+                      >>"$STATE/commands"
+                  ;;
+              inherit)
+                  property=${2:?property is required}
+                  dataset=${3:?dataset is required}
+                  rm -f "$(property_path "$dataset" "$property")"
+                  printf 'inherit\t%s\t%s\n' "$dataset" "$property" \
+                      >>"$STATE/commands"
+                  ;;
+              destroy)
+                  snapshot=${2:?snapshot is required}
+                  printf '%s\n' "$snapshot" >>"$STATE/destroyed"
+                  awk -v wanted="$snapshot" '$1 != wanted' \
+                      "$STATE/snapshots" >"$STATE/snapshots.next"
+                  mv "$STATE/snapshots.next" "$STATE/snapshots"
+                  ;;
+              *)
+                  exit 2
+                  ;;
+          esac
+
+    - name: Install mock zfs-auto-snapshot executable
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/zfs-auto-snapshot
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          if [ "${1:-}" = "--help" ]; then
+              printf '%s\n' '--default-exclude --prefix --label --syslog'
+              exit 0
+          fi
+          printf '%s\n' "$*" >>/run/pve-zfs-snapshot-policy-test/auto-snapshot
+
+    - name: Install deterministic hostname mock
+      ansible.builtin.copy:
+        dest: /usr/local/bin/hostname
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          printf '%s\n' '{{ inventory_hostname }}'
+
+    - name: Create package run-parts directories
+      ansible.builtin.file:
+        path: "/etc/cron.{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - hourly
+        - daily
+        - weekly
+        - monthly
+
+    - name: Seed package run-parts snapshot jobs
+      ansible.builtin.copy:
+        dest: "/etc/cron.{{ item }}/zfs-auto-snapshot"
+        owner: root
+        group: root
+        mode: "0755"
+        content: "#!/bin/sh\nexit 0\n"
+      loop:
+        - hourly
+        - daily
+        - weekly
+        - monthly

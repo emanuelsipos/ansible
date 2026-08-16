@@ -1,0 +1,251 @@
+---
+- name: Verify ZFS snapshot policy
+  hosts: all
+  vars:
+    pve_zfs_snapshot_policy_tiers:
+      frequent: {schedule: "*/15 * * * *", keep: 4}
+      hourly: {schedule: "17 * * * *", keep: 24}
+      daily: {schedule: "25 3 * * *", keep: 7}
+      weekly: {schedule: "47 3 * * 0", keep: 4}
+      monthly: {schedule: "52 3 1 * *", keep: 3}
+    pve_zfs_snapshot_policy_profiles:
+      disabled:
+        {frequent: false, hourly: false, daily: false, weekly: false, monthly: false}
+      host_root:
+        {frequent: false, hourly: true, daily: true, weekly: true, monthly: true}
+      guest:
+        {frequent: true, hourly: true, daily: false, weekly: false, monthly: false}
+      bulk:
+        {frequent: false, hourly: false, daily: true, weekly: true, monthly: false}
+      app:
+        {frequent: true, hourly: true, daily: true, weekly: true, monthly: true}
+    pve_zfs_snapshot_policy_common_datasets:
+      rpool: disabled
+      rpool/ROOT: disabled
+      rpool/ROOT/pve-1: host_root
+      rpool/data: guest
+      rpool/var-lib-vz: disabled
+    pve_zfs_snapshot_policy_host_datasets:
+      io:
+        data: bulk
+        data/proxmox: disabled
+        data2: bulk
+        data3: bulk
+        data3/frigate: disabled
+        data3/karakeep: app
+        data3/proxmox: disabled
+        data3/proxmox-backup-server: disabled
+    pve_zfs_snapshot_policy_prune_schedule: "10 4 * * *"
+  tasks:
+    - name: Read explicit automatic snapshot cron policy
+      ansible.builtin.slurp:
+        src: /etc/cron.d/zfs-auto-snapshot
+      register: pve_zfs_snapshot_policy_cron
+
+    - name: Verify report-only explicit opt-in cron policy
+      ansible.builtin.assert:
+        that:
+          - >-
+            (pve_zfs_snapshot_policy_cron.content | b64decode)
+            is search('--default-exclude')
+          - >-
+            (pve_zfs_snapshot_policy_cron.content | b64decode)
+            is search('--label=frequent')
+          - >-
+            (pve_zfs_snapshot_policy_cron.content | b64decode)
+            is not search('--keep=')
+          - >-
+            (pve_zfs_snapshot_policy_cron.content | b64decode)
+            is not search('pve-zfs-snapshot-prune --execute')
+
+    - name: Inspect package automatic snapshot cron diversions
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/dpkg-divert
+          - --truename
+          - "{{ item }}"
+      loop:
+        - /etc/cron.d/zfs-auto-snapshot
+        - /etc/cron.hourly/zfs-auto-snapshot
+        - /etc/cron.daily/zfs-auto-snapshot
+        - /etc/cron.weekly/zfs-auto-snapshot
+        - /etc/cron.monthly/zfs-auto-snapshot
+      register: pve_zfs_snapshot_policy_package_diversions
+      changed_when: false
+
+    - name: Verify package cron files are durably diverted
+      ansible.builtin.assert:
+        that:
+          - item.stdout == item.item + '.distrib'
+      loop: "{{ pve_zfs_snapshot_policy_package_diversions.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Inspect active package run-parts snapshot jobs
+      ansible.builtin.stat:
+        path: "/etc/cron.{{ item }}/zfs-auto-snapshot"
+      loop: [hourly, daily, weekly, monthly]
+      register: pve_zfs_snapshot_policy_package_jobs
+
+    - name: Verify active package run-parts jobs were removed
+      ansible.builtin.assert:
+        that:
+          - >-
+            not pve_zfs_snapshot_policy_package_jobs.results
+            | map(attribute='stat.exists') | max
+
+    - name: Read expected snapshot properties
+      ansible.builtin.command:
+        argv:
+          - /usr/sbin/zfs
+          - get
+          - -H
+          - -o
+          - value
+          - "com.sun:auto-snapshot:{{ item.tier }}"
+          - "{{ item.dataset }}"
+      loop:
+        - {dataset: rpool, tier: hourly, value: "false"}
+        - {dataset: rpool/ROOT/pve-1, tier: hourly, value: "true"}
+        - {dataset: rpool/ROOT/pve-1, tier: monthly, value: "true"}
+        - {dataset: rpool/data, tier: frequent, value: "true"}
+        - {dataset: rpool/data, tier: daily, value: "false"}
+        - {dataset: rpool/data/subvol-100-disk-0, tier: frequent, value: "true"}
+        - {dataset: rpool/data/subvol-100-disk-0, tier: daily, value: "false"}
+      register: pve_zfs_snapshot_policy_common_properties
+      changed_when: false
+
+    - name: Verify common rpool profiles on every node
+      ansible.builtin.assert:
+        that:
+          - item.stdout == item.item.value
+      loop: "{{ pve_zfs_snapshot_policy_common_properties.results }}"
+      loop_control:
+        label: "{{ item.item.dataset }}:{{ item.item.tier }}"
+
+    - name: Read io-specific snapshot properties
+      ansible.builtin.command:
+        argv:
+          - /usr/sbin/zfs
+          - get
+          - -H
+          - -o
+          - value
+          - "com.sun:auto-snapshot:{{ item.tier }}"
+          - "{{ item.dataset }}"
+      loop:
+        - {dataset: data, tier: daily, value: "true"}
+        - {dataset: data, tier: monthly, value: "false"}
+        - {dataset: data3/frigate, tier: hourly, value: "false"}
+        - {dataset: data3/karakeep, tier: monthly, value: "true"}
+        - {dataset: data3/proxmox-backup-server, tier: daily, value: "false"}
+      register: pve_zfs_snapshot_policy_io_properties
+      when: inventory_hostname == 'io'
+      changed_when: false
+
+    - name: Verify io host-specific dataset profiles
+      ansible.builtin.assert:
+        that:
+          - item.stdout == item.item.value
+      loop: "{{ pve_zfs_snapshot_policy_io_properties.results }}"
+      loop_control:
+        label: "{{ item.item.dataset | default('skipped') }}"
+      when: inventory_hostname == 'io'
+
+    - name: Verify europa has no io-specific property state
+      ansible.builtin.find:
+        paths: /run/pve-zfs-snapshot-policy-test/properties
+        patterns: "data*"
+      register: pve_zfs_snapshot_policy_europa_data_properties
+      when: inventory_hostname == 'europa'
+
+    - name: Assert europa received only common rpool mappings
+      ansible.builtin.assert:
+        that:
+          - pve_zfs_snapshot_policy_europa_data_properties.matched == 0
+      when: inventory_hostname == 'europa'
+
+    - name: Run bounded snapshot prune report
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-zfs-snapshot-prune
+      register: pve_zfs_snapshot_policy_report
+      changed_when: false
+
+    - name: Verify report finds candidates without deleting them
+      ansible.builtin.assert:
+        that:
+          - "'candidate_count=' in pve_zfs_snapshot_policy_report.stdout"
+          - "'destroyed_count=0' in pve_zfs_snapshot_policy_report.stdout"
+
+    - name: Inspect default destroy log
+      ansible.builtin.stat:
+        path: /run/pve-zfs-snapshot-policy-test/destroyed
+      register: pve_zfs_snapshot_policy_default_destroy_log
+
+    - name: Verify default deployment destroyed nothing
+      ansible.builtin.assert:
+        that:
+          - not pve_zfs_snapshot_policy_default_destroy_log.stat.exists
+
+    - name: Exercise explicitly enabled immediate pruning on io
+      ansible.builtin.include_role:
+        name: pve_zfs_snapshot_policy
+      vars:
+        pve_zfs_snapshot_policy_prune_enabled: true
+        pve_zfs_snapshot_policy_prune_now: true
+      when: inventory_hostname == 'io'
+
+    - name: Read explicitly destroyed automatic snapshots
+      ansible.builtin.slurp:
+        src: /run/pve-zfs-snapshot-policy-test/destroyed
+      register: pve_zfs_snapshot_policy_destroy_log
+      when: inventory_hostname == 'io'
+
+    - name: Read prune-enabled automatic snapshot cron policy
+      ansible.builtin.slurp:
+        src: /etc/cron.d/zfs-auto-snapshot
+      register: pve_zfs_snapshot_policy_prune_cron
+      when: inventory_hostname == 'io'
+
+    - name: Verify helper is the sole prune path
+      ansible.builtin.assert:
+        that:
+          - >-
+            (pve_zfs_snapshot_policy_prune_cron.content | b64decode)
+            is search('pve-zfs-snapshot-prune --execute')
+          - >-
+            (pve_zfs_snapshot_policy_prune_cron.content | b64decode)
+            is not search('--keep=')
+      when: inventory_hostname == 'io'
+
+    - name: Verify pruning touched only configured automatic tiers
+      ansible.builtin.assert:
+        that:
+          - >-
+            pve_zfs_snapshot_policy_destroy_log.content | b64decode
+            is match('(?s)^(?:[^\n]+@zfs-auto-snap_(?:frequent|hourly|daily|weekly|monthly)-[^\n]+\n)+$')
+          - >-
+            '__replicate_' not in
+            (pve_zfs_snapshot_policy_destroy_log.content | b64decode)
+          - >-
+            'manual-recovery' not in
+            (pve_zfs_snapshot_policy_destroy_log.content | b64decode)
+      when: inventory_hostname == 'io'
+
+    - name: Read snapshots remaining after explicit prune
+      ansible.builtin.slurp:
+        src: /run/pve-zfs-snapshot-policy-test/snapshots
+      register: pve_zfs_snapshot_policy_remaining_snapshots
+      when: inventory_hostname == 'io'
+
+    - name: Verify manual and Proxmox snapshots remain
+      ansible.builtin.assert:
+        that:
+          - >-
+            '__replicate_100-0_100__' in
+            (pve_zfs_snapshot_policy_remaining_snapshots.content | b64decode)
+          - >-
+            'manual-recovery' in
+            (pve_zfs_snapshot_policy_remaining_snapshots.content | b64decode)
+      when: inventory_hostname == 'io'

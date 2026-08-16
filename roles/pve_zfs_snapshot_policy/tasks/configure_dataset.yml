@@ -1,0 +1,63 @@
+---
+- name: Read base automatic snapshot property
+  ansible.builtin.command:
+    argv:
+      - "{{ pve_zfs_snapshot_policy_zfs_executable }}"
+      - get
+      - -H
+      - -o
+      - source
+      - com.sun:auto-snapshot
+      - "{{ pve_zfs_snapshot_policy_dataset.key }}"
+  register: _pve_zfs_snapshot_policy_base_property
+  changed_when: false
+
+- name: Clear local base automatic snapshot property
+  ansible.builtin.command:
+    argv:
+      - "{{ pve_zfs_snapshot_policy_zfs_executable }}"
+      - inherit
+      - com.sun:auto-snapshot
+      - "{{ pve_zfs_snapshot_policy_dataset.key }}"
+  when: _pve_zfs_snapshot_policy_base_property.stdout == 'local'
+  changed_when: true
+
+- name: Read tier automatic snapshot properties
+  ansible.builtin.command:
+    argv:
+      - "{{ pve_zfs_snapshot_policy_zfs_executable }}"
+      - get
+      - -H
+      - -o
+      - value
+      - "com.sun:auto-snapshot:{{ item.key }}"
+      - "{{ pve_zfs_snapshot_policy_dataset.key }}"
+  loop: "{{ pve_zfs_snapshot_policy_tiers | dict2items }}"
+  loop_control:
+    label: "{{ pve_zfs_snapshot_policy_dataset.key }}:{{ item.key }}"
+  register: _pve_zfs_snapshot_policy_tier_properties
+  changed_when: false
+
+- name: Set tier automatic snapshot properties
+  ansible.builtin.command:
+    argv:
+      - "{{ pve_zfs_snapshot_policy_zfs_executable }}"
+      - set
+      - >-
+        com.sun:auto-snapshot:{{ item.item.key }}={{
+          pve_zfs_snapshot_policy_profiles[
+            pve_zfs_snapshot_policy_dataset.value
+          ][item.item.key] | ternary('true', 'false')
+        }}
+      - "{{ pve_zfs_snapshot_policy_dataset.key }}"
+  loop: "{{ _pve_zfs_snapshot_policy_tier_properties.results }}"
+  loop_control:
+    label: "{{ pve_zfs_snapshot_policy_dataset.key }}:{{ item.item.key }}"
+  when: >-
+    item.stdout !=
+    (
+      pve_zfs_snapshot_policy_profiles[
+        pve_zfs_snapshot_policy_dataset.value
+      ][item.item.key] | ternary('true', 'false')
+    )
+  changed_when: true

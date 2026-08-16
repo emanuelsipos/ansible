@@ -30,6 +30,7 @@ jobs:
           - pve_maintenance
           - pve_peer_reboot
           - pve_resource_scheduling
+          - pve_zfs_snapshot_policy
           - pve_update_policy
           - sysctl
           - vzdump

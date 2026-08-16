@@ -1,0 +1,10 @@
+# Managed by Ansible role pve_zfs_snapshot_policy.
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+{% for tier in pve_zfs_snapshot_policy_tiers | dict2items %}
+{{ tier.value.schedule }} root {{ pve_zfs_snapshot_policy_executable }} --quiet --syslog --default-exclude --prefix={{ pve_zfs_snapshot_policy_prefix }} --label={{ tier.key }} //
+{% endfor %}
+{% if pve_zfs_snapshot_policy_prune_enabled %}
+{{ pve_zfs_snapshot_policy_prune_schedule }} root {{ pve_zfs_snapshot_policy_prune_helper }} --execute
+{% endif %}

@@ -1,0 +1,107 @@
+#!/usr/bin/python3
+"""Report or prune policy-managed zfs-auto-snapshot snapshots."""
+
+import argparse
+import fcntl
+import json
+import os
+import subprocess
+import sys
+
+
+TIERS = json.loads(r'''{{ pve_zfs_snapshot_policy_tiers | to_json }}''')
+PROFILES = json.loads(r'''{{ pve_zfs_snapshot_policy_profiles | to_json }}''')
+POLICY_ROOTS = json.loads(r'''{{ _pve_zfs_snapshot_policy_datasets | to_json }}''')
+ZFS = {{ pve_zfs_snapshot_policy_zfs_executable | to_json }}
+PREFIX = {{ pve_zfs_snapshot_policy_prefix | to_json }}
+REPORT_LIMIT = {{ pve_zfs_snapshot_policy_report_limit }}
+LOCK_FILE = {{ pve_zfs_snapshot_policy_prune_lock_file | to_json }}
+
+
+def profile_for(dataset):
+    matches = [
+        root
+        for root in POLICY_ROOTS
+        if dataset == root or dataset.startswith(root + "/")
+    ]
+    if not matches:
+        return None
+    root = max(matches, key=lambda value: (value.count("/"), len(value)))
+    return PROFILES[POLICY_ROOTS[root]]
+
+
+def snapshots():
+    result = subprocess.run(
+        [ZFS, "list", "-H", "-p", "-t", "snapshot", "-o", "name,creation"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    groups = {}
+    for line in result.stdout.splitlines():
+        full_name, creation_text = line.split("\t", 1)
+        if "@" not in full_name:
+            continue
+        dataset, snapshot = full_name.split("@", 1)
+        profile = profile_for(dataset)
+        if profile is None:
+            continue
+        for tier in sorted(TIERS, key=len, reverse=True):
+            if snapshot.startswith(f"{PREFIX}_{tier}-"):
+                groups.setdefault((dataset, tier), []).append(
+                    (int(creation_text), full_name, profile[tier])
+                )
+                break
+    return groups
+
+
+def candidates():
+    found = []
+    for (_, tier), entries in snapshots().items():
+        entries.sort(reverse=True)
+        keep = int(TIERS[tier]["keep"]) if entries[0][2] else 0
+        found.extend(entries[keep:])
+    return sorted(found)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--execute", action="store_true")
+    args = parser.parse_args()
+
+    os.makedirs(os.path.dirname(LOCK_FILE), mode=0o755, exist_ok=True)
+    lock = open(LOCK_FILE, "w", encoding="ascii")  # noqa: SIM115
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("another prune operation is active; skipping")
+        return
+
+    found = candidates()
+
+    for _, snapshot, _ in found[:REPORT_LIMIT]:
+        print(f"candidate={snapshot}")
+    if len(found) > REPORT_LIMIT:
+        print(f"omitted_candidates={len(found) - REPORT_LIMIT}")
+    print(f"candidate_count={len(found)}")
+
+    destroyed = 0
+    failed = 0
+    if args.execute:
+        for _, snapshot, _ in found:
+            result = subprocess.run(
+                [ZFS, "destroy", snapshot], capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                destroyed += 1
+            else:
+                failed += 1
+                print(f"failed={snapshot}", file=sys.stderr)
+    print(f"destroyed_count={destroyed}")
+    print(f"failed_count={failed}")
+    if failed:
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()

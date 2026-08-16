@@ -1,0 +1,289 @@
+---
+- name: Validate ZFS snapshot policy variable types
+  ansible.builtin.assert:
+    that:
+      - pve_zfs_snapshot_policy_tiers is mapping
+      - pve_zfs_snapshot_policy_profiles is mapping
+      - pve_zfs_snapshot_policy_common_datasets is mapping
+      - pve_zfs_snapshot_policy_host_datasets is mapping
+      - pve_zfs_snapshot_policy_prune_enabled is boolean
+      - pve_zfs_snapshot_policy_prune_now is boolean
+      - pve_zfs_snapshot_policy_report_prune_candidates is boolean
+      - not pve_zfs_snapshot_policy_prune_now or pve_zfs_snapshot_policy_prune_enabled
+      - pve_zfs_snapshot_policy_report_limit is integer
+      - pve_zfs_snapshot_policy_report_limit > 0
+      - pve_zfs_snapshot_policy_report_limit <= 100
+      - pve_zfs_snapshot_policy_executable is match('^/[A-Za-z0-9_./-]+$')
+      - pve_zfs_snapshot_policy_zfs_executable is match('^/[A-Za-z0-9_./-]+$')
+      - >-
+        pve_zfs_snapshot_policy_dpkg_divert_executable
+        is match('^/[A-Za-z0-9_./-]+$')
+      - pve_zfs_snapshot_policy_prune_helper is match('^/[A-Za-z0-9_./-]+$')
+      - pve_zfs_snapshot_policy_prune_lock_file is match('^/[A-Za-z0-9_./-]+$')
+      - pve_zfs_snapshot_policy_prefix is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+    quiet: true
+    fail_msg: ZFS snapshot policy variables or prune safety gates are invalid
+  tags: [pve, snapshots]
+
+- name: Validate ZFS snapshot policy tiers
+  ansible.builtin.assert:
+    that:
+      - item.key is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - item.value is mapping
+      - item.value.keys() | list | sort == ['keep', 'schedule']
+      - item.value.schedule is string
+      - >-
+        item.value.schedule
+        is match('^[0-9*/,-]+(?: [0-9*/,-]+){4}$')
+      - not item.value.schedule is search('[\r\n]')
+      - item.value.keep is integer
+      - item.value.keep > 0
+      - item.value.keep <= 366
+    quiet: true
+    fail_msg: >-
+      Snapshot tier {{ item.key | default('invalid') }} requires a safe
+      five-field cron schedule and keep value from 1 through 366
+  loop: "{{ pve_zfs_snapshot_policy_tiers | dict2items }}"
+  loop_control:
+    label: "{{ item.key | default('invalid') }}"
+  tags: [pve, snapshots]
+
+- name: Validate ZFS snapshot policy profiles
+  ansible.builtin.include_tasks: validate_profile.yml
+  loop: "{{ pve_zfs_snapshot_policy_profiles | dict2items }}"
+  loop_control:
+    loop_var: pve_zfs_snapshot_policy_profile
+    label: "{{ pve_zfs_snapshot_policy_profile.key }}"
+  tags: [pve, snapshots]
+
+- name: Validate ZFS snapshot policy host mappings
+  ansible.builtin.assert:
+    that:
+      - item.key is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - item.value is mapping
+    quiet: true
+    fail_msg: Snapshot host keys and values must be safe mappings
+  loop: "{{ pve_zfs_snapshot_policy_host_datasets | dict2items }}"
+  loop_control:
+    label: "{{ item.key | default('invalid') }}"
+  tags: [pve, snapshots]
+
+- name: Select local ZFS snapshot dataset policy
+  ansible.builtin.set_fact:
+    _pve_zfs_snapshot_policy_datasets: >-
+      {{
+        pve_zfs_snapshot_policy_common_datasets
+        | combine(
+            pve_zfs_snapshot_policy_host_datasets.get(inventory_hostname, {})
+          )
+      }}
+  tags: [pve, snapshots]
+
+- name: Configure local ZFS snapshot policy
+  when: _pve_zfs_snapshot_policy_datasets | length > 0
+  tags: [pve, snapshots]
+  block:
+    - name: Validate complete local ZFS snapshot policy
+      ansible.builtin.assert:
+        that:
+          - pve_zfs_snapshot_policy_tiers | length > 0
+          - pve_zfs_snapshot_policy_profiles | length > 0
+          - inventory_hostname is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+          - >-
+            not pve_zfs_snapshot_policy_prune_enabled or
+            pve_zfs_snapshot_policy_prune_schedule
+            is match('^[0-9*/,-]+(?: [0-9*/,-]+){4}$')
+          - not pve_zfs_snapshot_policy_prune_schedule is search('[\r\n]')
+        quiet: true
+        fail_msg: Local ZFS snapshot policy is incomplete or unsafe
+
+    - name: Validate local ZFS dataset mappings
+      ansible.builtin.assert:
+        that:
+          - item.key is match('^[A-Za-z0-9][A-Za-z0-9_.:-]*(/[A-Za-z0-9][A-Za-z0-9_.:-]*)*$')
+          - item.value is string
+          - item.value in pve_zfs_snapshot_policy_profiles
+        quiet: true
+        fail_msg: >-
+          Dataset {{ item.key | default('invalid') }} must have a safe name and
+          reference an existing snapshot profile
+      loop: "{{ _pve_zfs_snapshot_policy_datasets | dict2items }}"
+      loop_control:
+        label: "{{ item.key | default('invalid') }}"
+
+    - name: Read local hostname before applying snapshot policy
+      ansible.builtin.command:
+        argv:
+          - hostname
+          - --short
+      register: _pve_zfs_snapshot_policy_local_hostname
+      changed_when: false
+
+    - name: Assert local hostname matches snapshot inventory host
+      ansible.builtin.assert:
+        that:
+          - _pve_zfs_snapshot_policy_local_hostname.stdout == inventory_hostname
+        quiet: true
+        fail_msg: >-
+          Refusing to apply ZFS snapshot policy because the local hostname does
+          not match inventory_hostname
+
+    - name: Inspect required snapshot executables
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ pve_zfs_snapshot_policy_executable }}"
+        - "{{ pve_zfs_snapshot_policy_zfs_executable }}"
+        - "{{ pve_zfs_snapshot_policy_dpkg_divert_executable }}"
+      register: _pve_zfs_snapshot_policy_executables
+
+    - name: Assert required snapshot executables are installed
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isreg
+          - item.stat.executable
+        quiet: true
+        fail_msg: >-
+          Required executable {{ item.item }} is missing or not executable;
+          install it through controlled PVE maintenance before deploying policy
+      loop: "{{ _pve_zfs_snapshot_policy_executables.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Inspect zfs-auto-snapshot option compatibility
+      ansible.builtin.command:
+        argv:
+          - "{{ pve_zfs_snapshot_policy_executable }}"
+          - --help
+      register: _pve_zfs_snapshot_policy_executable_help
+      changed_when: false
+
+    - name: Assert zfs-auto-snapshot supports required options
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_pve_zfs_snapshot_policy_executable_help.stdout ~
+            _pve_zfs_snapshot_policy_executable_help.stderr)
+            is search('--default-exclude')
+          - >-
+            (_pve_zfs_snapshot_policy_executable_help.stdout ~
+            _pve_zfs_snapshot_policy_executable_help.stderr)
+            is search('--prefix')
+          - >-
+            (_pve_zfs_snapshot_policy_executable_help.stdout ~
+            _pve_zfs_snapshot_policy_executable_help.stderr)
+            is search('--label')
+        quiet: true
+        fail_msg: >-
+          Configured zfs-auto-snapshot executable does not support the required
+          explicit opt-in options
+
+    - name: Validate configured local ZFS datasets exist
+      ansible.builtin.command:
+        argv:
+          - "{{ pve_zfs_snapshot_policy_zfs_executable }}"
+          - list
+          - -H
+          - -o
+          - name
+          - "{{ item.key }}"
+      loop: "{{ _pve_zfs_snapshot_policy_datasets | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      changed_when: false
+
+    - name: Apply explicit ZFS snapshot properties
+      ansible.builtin.include_tasks: configure_dataset.yml
+      loop: "{{ _pve_zfs_snapshot_policy_datasets | dict2items }}"
+      loop_control:
+        loop_var: pve_zfs_snapshot_policy_dataset
+        label: "{{ pve_zfs_snapshot_policy_dataset.key }}"
+
+    - name: Read package automatic snapshot cron diversions
+      ansible.builtin.command:
+        argv:
+          - "{{ pve_zfs_snapshot_policy_dpkg_divert_executable }}"
+          - --truename
+          - "{{ item }}"
+      loop: "{{ pve_zfs_snapshot_policy_package_cron_files }}"
+      register: _pve_zfs_snapshot_policy_cron_diversions
+      changed_when: false
+
+    - name: Validate package automatic snapshot cron diversions
+      ansible.builtin.assert:
+        that:
+          - item.stdout in [item.item, item.item + '.distrib']
+        quiet: true
+        fail_msg: >-
+          Refusing to replace existing diversion for {{ item.item }} to
+          {{ item.stdout }}
+      loop: "{{ _pve_zfs_snapshot_policy_cron_diversions.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Divert package automatic snapshot cron jobs
+      ansible.builtin.command:
+        argv:
+          - "{{ pve_zfs_snapshot_policy_dpkg_divert_executable }}"
+          - --local
+          - --rename
+          - --divert
+          - "{{ item.item }}.distrib"
+          - --add
+          - "{{ item.item }}"
+      when: item.stdout == item.item
+      loop: "{{ _pve_zfs_snapshot_policy_cron_diversions.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      changed_when: true
+
+    - name: Install bounded automatic snapshot prune helper
+      ansible.builtin.template:
+        src: pve-zfs-snapshot-prune.py.j2
+        dest: "{{ pve_zfs_snapshot_policy_prune_helper }}"
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Install explicit automatic snapshot cron policy
+      ansible.builtin.template:
+        src: zfs-auto-snapshot.cron.j2
+        dest: "{{ pve_zfs_snapshot_policy_cron_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Disable diverted package run-parts automatic snapshot jobs
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: >-
+        {{
+          pve_zfs_snapshot_policy_package_cron_files
+          | reject('equalto', pve_zfs_snapshot_policy_cron_file)
+          | list
+        }}
+
+    - name: Report bounded automatic snapshot prune candidates
+      ansible.builtin.command:
+        argv:
+          - "{{ pve_zfs_snapshot_policy_prune_helper }}"
+      register: _pve_zfs_snapshot_policy_prune_report
+      when: pve_zfs_snapshot_policy_report_prune_candidates
+      changed_when: false
+
+    - name: Show automatic snapshot prune candidate report
+      ansible.builtin.debug:
+        var: _pve_zfs_snapshot_policy_prune_report.stdout_lines
+      when: pve_zfs_snapshot_policy_report_prune_candidates
+
+    - name: Prune automatic snapshots now when explicitly enabled
+      ansible.builtin.command:
+        argv:
+          - "{{ pve_zfs_snapshot_policy_prune_helper }}"
+          - --execute
+      register: _pve_zfs_snapshot_policy_prune_result
+      when: pve_zfs_snapshot_policy_prune_now
+      changed_when: >-
+        'destroyed_count=0' not in _pve_zfs_snapshot_policy_prune_result.stdout

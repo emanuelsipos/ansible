@@ -8,14 +8,16 @@ Production inventory and credentials are managed in Semaphore and are not stored
 
 - `all-hosts`: unattended upgrades on non-PVE hosts, log retention, zsh,
   Docker, host tuning, encrypted PVE host backups, PVE update policy, and
-  staggered PVE ZFS scrubs
+  staggered PVE ZFS scrubs, and explicit PVE ZFS snapshot retention
 - `beszel`: Beszel agent installation and configuration
 - `komodo`: Komodo periphery and server configuration
 - `tailscale`: Tailscale installation and enrollment
 - `pve-maintenance`: single-node, report-first PVE `apt-get dist-upgrade`
   maintenance; see its [runbook](playbooks/pve-maintenance/README.md)
 
-Reusable roles live under [`roles/`](roles/), including journald retention, zsh, sysctl configuration, zram, staggered PVE ZFS scrubs, vzdump exclusions, and GitHub release downloads.
+Reusable roles live under [`roles/`](roles/), including journald retention, zsh,
+sysctl configuration, zram, staggered PVE ZFS scrubs, explicit ZFS snapshot
+policy, vzdump exclusions, and GitHub release downloads.
 
 ## Semaphore configuration
 
@@ -62,6 +64,13 @@ with one daily systemd timer that dynamically spaces pool-level ZFS scrubs for
 configured PVE hosts. See
 [`roles/pve_resource_scheduling/README.md`](roles/pve_resource_scheduling/README.md)
 and keep the host-keyed `group_vars/pve.yml` calendar and cycle policy current.
+
+`pve_zfs_snapshot_policy` applies reusable retention profiles to common and
+host-specific datasets entirely from inventory variables. It uses explicit
+opt-in snapshot properties and reports bounded prune candidates. Scheduled
+deletion starts only when pruning is enabled; `prune_now` additionally permits
+an immediate cleanup during the play. See
+[`roles/pve_zfs_snapshot_policy/README.md`](roles/pve_zfs_snapshot_policy/README.md).
 
 The unattended-upgrades role is explicitly excluded from PVE inventory hosts.
 PVE index refresh remains enabled without automatic package downloads or APT

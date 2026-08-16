@@ -1,0 +1,25 @@
+---
+# Retention and dataset classification belong in group_vars or host_vars.
+pve_zfs_snapshot_policy_tiers: {}
+pve_zfs_snapshot_policy_profiles: {}
+pve_zfs_snapshot_policy_common_datasets: {}
+pve_zfs_snapshot_policy_host_datasets: {}
+
+pve_zfs_snapshot_policy_executable: /usr/local/sbin/zfs-auto-snapshot
+pve_zfs_snapshot_policy_zfs_executable: /usr/sbin/zfs
+pve_zfs_snapshot_policy_dpkg_divert_executable: /usr/bin/dpkg-divert
+pve_zfs_snapshot_policy_prefix: zfs-auto-snap
+pve_zfs_snapshot_policy_cron_file: /etc/cron.d/zfs-auto-snapshot
+pve_zfs_snapshot_policy_package_cron_files:
+  - /etc/cron.d/zfs-auto-snapshot
+  - /etc/cron.hourly/zfs-auto-snapshot
+  - /etc/cron.daily/zfs-auto-snapshot
+  - /etc/cron.weekly/zfs-auto-snapshot
+  - /etc/cron.monthly/zfs-auto-snapshot
+pve_zfs_snapshot_policy_prune_helper: /usr/local/sbin/pve-zfs-snapshot-prune
+pve_zfs_snapshot_policy_prune_lock_file: /run/lock/pve-zfs-snapshot-prune.lock
+pve_zfs_snapshot_policy_prune_schedule: ""
+pve_zfs_snapshot_policy_prune_enabled: false
+pve_zfs_snapshot_policy_prune_now: false
+pve_zfs_snapshot_policy_report_prune_candidates: true
+pve_zfs_snapshot_policy_report_limit: 20

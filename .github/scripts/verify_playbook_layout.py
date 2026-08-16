@@ -18,6 +18,7 @@ EXPECTED = {
         {
             "machines_sysctl_settings",
             "pve_sysctl_settings",
+            "pve_zfs_snapshot_policy_profiles",
             "unattended_upgrades_origins_patterns",
         },
     ),
