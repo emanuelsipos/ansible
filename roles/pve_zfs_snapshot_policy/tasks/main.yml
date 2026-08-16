@@ -6,10 +6,14 @@
       - pve_zfs_snapshot_policy_profiles is mapping
       - pve_zfs_snapshot_policy_common_datasets is mapping
       - pve_zfs_snapshot_policy_host_datasets is mapping
+      - pve_zfs_snapshot_policy_creation_enabled is boolean
       - pve_zfs_snapshot_policy_prune_enabled is boolean
       - pve_zfs_snapshot_policy_prune_now is boolean
       - pve_zfs_snapshot_policy_report_prune_candidates is boolean
       - not pve_zfs_snapshot_policy_prune_now or pve_zfs_snapshot_policy_prune_enabled
+      - >-
+        pve_zfs_snapshot_policy_creation_enabled ==
+        pve_zfs_snapshot_policy_prune_enabled
       - pve_zfs_snapshot_policy_report_limit is integer
       - pve_zfs_snapshot_policy_report_limit > 0
       - pve_zfs_snapshot_policy_report_limit <= 100

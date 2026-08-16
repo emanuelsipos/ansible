@@ -47,10 +47,13 @@
         that:
           - >-
             (pve_zfs_snapshot_policy_cron.content | b64decode)
-            is search('--default-exclude')
+            is search('Report-only mode')
           - >-
             (pve_zfs_snapshot_policy_cron.content | b64decode)
-            is search('--label=frequent')
+            is not search('--default-exclude')
+          - >-
+            (pve_zfs_snapshot_policy_cron.content | b64decode)
+            is not search('--label=frequent')
           - >-
             (pve_zfs_snapshot_policy_cron.content | b64decode)
             is not search('--keep=')
@@ -192,6 +195,7 @@
       ansible.builtin.include_role:
         name: pve_zfs_snapshot_policy
       vars:
+        pve_zfs_snapshot_policy_creation_enabled: true
         pve_zfs_snapshot_policy_prune_enabled: true
         pve_zfs_snapshot_policy_prune_now: true
       when: inventory_hostname == 'io'

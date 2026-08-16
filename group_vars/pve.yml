@@ -97,9 +97,10 @@ pve_zfs_snapshot_policy_host_datasets:
     data3/proxmox: disabled
     data3/proxmox-backup-server: disabled
 
-# First deploy in report-only mode. Enable scheduled pruning only after the
-# candidate report has been reviewed for every reachable node.
+# First deploy in report-only mode. Enable scheduled creation and pruning only
+# after the candidate report has been reviewed for every reachable node.
 pve_zfs_snapshot_policy_prune_schedule: "10 4 * * *"
+pve_zfs_snapshot_policy_creation_enabled: false
 pve_zfs_snapshot_policy_prune_enabled: false
 pve_zfs_snapshot_policy_prune_now: false
 pve_zfs_snapshot_policy_report_prune_candidates: true

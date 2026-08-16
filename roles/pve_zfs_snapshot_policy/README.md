@@ -41,15 +41,21 @@ automatic snapshots. All five package cron files are preserved under local
 restoring duplicate jobs. Remove those diversions explicitly when
 decommissioning the role.
 
-Pruning is disabled by default. With
+Creation and pruning are both disabled by default. This prevents unbounded
+snapshot growth while a candidate report is being reviewed. With
 `pve_zfs_snapshot_policy_report_prune_candidates: true`, deployment reports a
-bounded list without deleting anything. Enable scheduled retention only after
-reviewing that report:
+bounded list without creating or deleting anything. Enable bounded creation and
+scheduled retention together only after reviewing that report:
 
 ```yaml
+pve_zfs_snapshot_policy_creation_enabled: true
 pve_zfs_snapshot_policy_prune_enabled: true
 pve_zfs_snapshot_policy_prune_schedule: "10 4 * * *"
 ```
+
+The role requires `creation_enabled` and `prune_enabled` to match. This prevents
+both deletion without replacement snapshots and creation without bounded
+retention.
 
 An immediate cleanup additionally requires:
 
