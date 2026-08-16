@@ -35,6 +35,10 @@
         data3/karakeep: app
         data3/proxmox: disabled
         data3/proxmox-backup-server: disabled
-    pve_zfs_snapshot_policy_prune_schedule: "10 4 * * *"
+    pve_zfs_snapshot_policy_prune_schedule: "7,22,37,56 * * * *"
+    pve_zfs_snapshot_policy_host_activation:
+      io:
+        creation_enabled: true
+        prune_enabled: true
   roles:
     - role: pve_zfs_snapshot_policy

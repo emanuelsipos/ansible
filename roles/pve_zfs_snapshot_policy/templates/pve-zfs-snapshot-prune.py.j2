@@ -3,6 +3,7 @@
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import subprocess
@@ -13,9 +14,11 @@ TIERS = json.loads(r'''{{ pve_zfs_snapshot_policy_tiers | to_json }}''')
 PROFILES = json.loads(r'''{{ pve_zfs_snapshot_policy_profiles | to_json }}''')
 POLICY_ROOTS = json.loads(r'''{{ _pve_zfs_snapshot_policy_datasets | to_json }}''')
 ZFS = {{ pve_zfs_snapshot_policy_zfs_executable | to_json }}
+ZPOOL = {{ pve_zfs_snapshot_policy_zpool_executable | to_json }}
 PREFIX = {{ pve_zfs_snapshot_policy_prefix | to_json }}
 REPORT_LIMIT = {{ pve_zfs_snapshot_policy_report_limit }}
 LOCK_FILE = {{ pve_zfs_snapshot_policy_prune_lock_file | to_json }}
+SCAN_LOCK_FILE = {{ pve_zfs_snapshot_policy_scan_lock_file | to_json }}
 
 
 def profile_for(dataset):
@@ -64,9 +67,48 @@ def candidates():
     return sorted(found)
 
 
+def scan_blockers(found):
+    pools = sorted(
+        {
+            snapshot.split("@", 1)[0].split("/", 1)[0]
+            for _, snapshot, _ in found
+        }
+    )
+    blockers = []
+    for pool in pools:
+        result = subprocess.run(
+            [ZPOOL, "status", "-jp", pool], capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            blockers.append((pool, "inspection_failed", result.stderr.strip()))
+            continue
+        try:
+            scan = json.loads(result.stdout)["pools"][pool].get("scan_stats", {})
+            function = str(scan.get("function", "NONE")).upper()
+            state = str(scan.get("state", "NONE")).upper()
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+            blockers.append((pool, "inspection_failed", str(error)))
+            continue
+        if function in {"SCRUB", "RESILVER"} and state in {
+            "SCANNING",
+            "PAUSED",
+            "IN_PROGRESS",
+        }:
+            blockers.append((pool, "active_scan", f"{function}:{state}"))
+    return blockers
+
+
+def manifest_sha256(found):
+    names = "".join(f"{snapshot}\n" for _, snapshot, _ in found)
+    return hashlib.sha256(names.encode("utf-8")).hexdigest()
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--execute", action="store_true")
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--execute", action="store_true")
+    action.add_argument("--preflight", action="store_true")
+    parser.add_argument("--expect-manifest-sha256")
     args = parser.parse_args()
 
     os.makedirs(os.path.dirname(LOCK_FILE), mode=0o755, exist_ok=True)
@@ -84,11 +126,58 @@ def main():
     if len(found) > REPORT_LIMIT:
         print(f"omitted_candidates={len(found) - REPORT_LIMIT}")
     print(f"candidate_count={len(found)}")
+    print(f"candidate_manifest_sha256={manifest_sha256(found)}")
+
+    if (
+        args.expect_manifest_sha256
+        and args.expect_manifest_sha256 != manifest_sha256(found)
+    ):
+        print("manifest_mismatch=true", file=sys.stderr)
+        raise SystemExit(1)
 
     destroyed = 0
     failed = 0
-    if args.execute:
-        for _, snapshot, _ in found:
+    if args.execute or args.preflight:
+        scan_lock = open(SCAN_LOCK_FILE, "w", encoding="ascii")  # noqa: SIM115
+        try:
+            fcntl.flock(scan_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("scan_lock_unavailable=true", file=sys.stderr)
+            raise SystemExit(1)
+
+        blockers = scan_blockers(found)
+        for pool, reason, detail in blockers:
+            print(f"skipped_pool={pool}:{reason}:{detail}")
+        blocked_pools = {pool for pool, _, _ in blockers}
+        selected = [
+            entry
+            for entry in found
+            if entry[1].split("@", 1)[0].split("/", 1)[0] not in blocked_pools
+        ]
+        print(f"skipped_candidate_count={len(found) - len(selected)}")
+
+        for _, snapshot, _ in selected:
+            result = subprocess.run(
+                [ZFS, "destroy", "-n", snapshot], capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                failed += 1
+                print(f"preflight_failed={snapshot}", file=sys.stderr)
+                sys.stderr.write(result.stderr)
+
+        if failed:
+            print(f"destroyed_count={destroyed}")
+            print(f"failed_count={failed}")
+            raise SystemExit(1)
+
+        print(f"preflight_count={len(selected)}")
+
+        if args.preflight:
+            print(f"destroyed_count={destroyed}")
+            print(f"failed_count={failed}")
+            return
+
+        for _, snapshot, _ in selected:
             result = subprocess.run(
                 [ZFS, "destroy", snapshot], capture_output=True, text=True
             )
@@ -97,6 +186,8 @@ def main():
             else:
                 failed += 1
                 print(f"failed={snapshot}", file=sys.stderr)
+                sys.stderr.write(result.stderr)
+                break
     print(f"destroyed_count={destroyed}")
     print(f"failed_count={failed}")
     if failed:

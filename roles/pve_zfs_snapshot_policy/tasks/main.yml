@@ -6,27 +6,88 @@
       - pve_zfs_snapshot_policy_profiles is mapping
       - pve_zfs_snapshot_policy_common_datasets is mapping
       - pve_zfs_snapshot_policy_host_datasets is mapping
-      - pve_zfs_snapshot_policy_creation_enabled is boolean
-      - pve_zfs_snapshot_policy_prune_enabled is boolean
+      - pve_zfs_snapshot_policy_host_activation is mapping
       - pve_zfs_snapshot_policy_prune_now is boolean
       - pve_zfs_snapshot_policy_report_prune_candidates is boolean
-      - not pve_zfs_snapshot_policy_prune_now or pve_zfs_snapshot_policy_prune_enabled
-      - >-
-        pve_zfs_snapshot_policy_creation_enabled ==
-        pve_zfs_snapshot_policy_prune_enabled
       - pve_zfs_snapshot_policy_report_limit is integer
       - pve_zfs_snapshot_policy_report_limit > 0
       - pve_zfs_snapshot_policy_report_limit <= 100
       - pve_zfs_snapshot_policy_executable is match('^/[A-Za-z0-9_./-]+$')
       - pve_zfs_snapshot_policy_zfs_executable is match('^/[A-Za-z0-9_./-]+$')
+      - pve_zfs_snapshot_policy_zpool_executable is match('^/[A-Za-z0-9_./-]+$')
       - >-
         pve_zfs_snapshot_policy_dpkg_divert_executable
         is match('^/[A-Za-z0-9_./-]+$')
       - pve_zfs_snapshot_policy_prune_helper is match('^/[A-Za-z0-9_./-]+$')
       - pve_zfs_snapshot_policy_prune_lock_file is match('^/[A-Za-z0-9_./-]+$')
+      - >-
+        pve_zfs_snapshot_policy_scan_lock_file ==
+        '/run/lock/pve-zfs-scrub.lock'
       - pve_zfs_snapshot_policy_prefix is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
     quiet: true
-    fail_msg: ZFS snapshot policy variables or prune safety gates are invalid
+    fail_msg: >-
+      ZFS snapshot policy variables or prune safety gates are invalid; the scan
+      lock must match the managed scrub launcher
+  tags: [pve, snapshots]
+
+- name: Validate ZFS snapshot policy host activation
+  ansible.builtin.assert:
+    that:
+      - item.key is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - item.value is mapping
+      - >-
+        item.value is mapping and
+        item.value.keys() | list | sort ==
+        ['creation_enabled', 'prune_enabled']
+      - >-
+        item.value is mapping and
+        item.value.get('creation_enabled') is boolean
+      - >-
+        item.value is mapping and
+        item.value.get('prune_enabled') is boolean
+      - >-
+        item.value is mapping and
+        (not item.value.get('prune_enabled') or
+        item.value.get('creation_enabled')
+        )
+    quiet: true
+    fail_msg: >-
+      Every snapshot host activation requires boolean creation_enabled and
+      prune_enabled values, and pruning requires creation
+  loop: "{{ pve_zfs_snapshot_policy_host_activation | dict2items }}"
+  loop_control:
+    label: "{{ item.key | default('invalid') }}"
+  tags: [pve, snapshots]
+
+- name: Resolve local ZFS snapshot activation
+  ansible.builtin.set_fact:
+    _pve_zfs_snapshot_policy_creation_enabled: >-
+      {{
+        pve_zfs_snapshot_policy_host_activation
+        .get(inventory_hostname, {})
+        .get('creation_enabled', false)
+      }}
+    _pve_zfs_snapshot_policy_prune_enabled: >-
+      {{
+        pve_zfs_snapshot_policy_host_activation
+        .get(inventory_hostname, {})
+        .get('prune_enabled', false)
+      }}
+  tags: [pve, snapshots]
+
+- name: Validate local ZFS snapshot activation gates
+  ansible.builtin.assert:
+    that:
+      - >-
+        not _pve_zfs_snapshot_policy_prune_enabled or
+        _pve_zfs_snapshot_policy_creation_enabled
+      - >-
+        not pve_zfs_snapshot_policy_prune_now or
+        _pve_zfs_snapshot_policy_prune_enabled
+    quiet: true
+    fail_msg: >-
+      Local snapshot pruning requires local creation, and prune_now requires
+      local pruning
   tags: [pve, snapshots]
 
 - name: Validate ZFS snapshot policy tiers
@@ -94,7 +155,7 @@
           - pve_zfs_snapshot_policy_profiles | length > 0
           - inventory_hostname is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
           - >-
-            not pve_zfs_snapshot_policy_prune_enabled or
+            not _pve_zfs_snapshot_policy_prune_enabled or
             pve_zfs_snapshot_policy_prune_schedule
             is match('^[0-9*/,-]+(?: [0-9*/,-]+){4}$')
           - not pve_zfs_snapshot_policy_prune_schedule is search('[\r\n]')
@@ -138,6 +199,7 @@
       loop:
         - "{{ pve_zfs_snapshot_policy_executable }}"
         - "{{ pve_zfs_snapshot_policy_zfs_executable }}"
+        - "{{ pve_zfs_snapshot_policy_zpool_executable }}"
         - "{{ pve_zfs_snapshot_policy_dpkg_divert_executable }}"
       register: _pve_zfs_snapshot_policy_executables
 
@@ -178,6 +240,10 @@
             (_pve_zfs_snapshot_policy_executable_help.stdout ~
             _pve_zfs_snapshot_policy_executable_help.stderr)
             is search('--label')
+          - >-
+            (_pve_zfs_snapshot_policy_executable_help.stdout ~
+            _pve_zfs_snapshot_policy_executable_help.stderr)
+            is search('--skip-scrub')
         quiet: true
         fail_msg: >-
           Configured zfs-auto-snapshot executable does not support the required
@@ -288,6 +354,8 @@
           - "{{ pve_zfs_snapshot_policy_prune_helper }}"
           - --execute
       register: _pve_zfs_snapshot_policy_prune_result
-      when: pve_zfs_snapshot_policy_prune_now
+      when: >-
+        pve_zfs_snapshot_policy_prune_now and
+        _pve_zfs_snapshot_policy_prune_enabled
       changed_when: >-
         'destroyed_count=0' not in _pve_zfs_snapshot_policy_prune_result.stdout

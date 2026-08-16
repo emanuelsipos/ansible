@@ -2,13 +2,13 @@
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-{% if pve_zfs_snapshot_policy_creation_enabled %}
+{% if _pve_zfs_snapshot_policy_creation_enabled %}
 {% for tier in pve_zfs_snapshot_policy_tiers | dict2items %}
-{{ tier.value.schedule }} root {{ pve_zfs_snapshot_policy_executable }} --quiet --syslog --default-exclude --prefix={{ pve_zfs_snapshot_policy_prefix }} --label={{ tier.key }} //
+{{ tier.value.schedule }} root {{ pve_zfs_snapshot_policy_executable }} --quiet --syslog --skip-scrub --default-exclude --prefix={{ pve_zfs_snapshot_policy_prefix }} --label={{ tier.key }} //
 {% endfor %}
-{% if pve_zfs_snapshot_policy_prune_enabled %}
+{% if _pve_zfs_snapshot_policy_prune_enabled %}
 {{ pve_zfs_snapshot_policy_prune_schedule }} root {{ pve_zfs_snapshot_policy_prune_helper }} --execute
 {% endif %}
 {% else %}
-# Report-only mode: creation and pruning activate together after review.
+# Report-only mode: this host is inactive.
 {% endif %}

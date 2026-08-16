@@ -67,9 +67,10 @@ and keep the host-keyed `group_vars/pve.yml` calendar and cycle policy current.
 
 `pve_zfs_snapshot_policy` applies reusable retention profiles to common and
 host-specific datasets entirely from inventory variables. It uses explicit
-opt-in snapshot properties and reports bounded prune candidates. Scheduled
-creation and pruning activate together after review; `prune_now` additionally
-permits an immediate cleanup during the play. See
+opt-in snapshot properties and reports bounded prune candidates. Activation is
+host-scoped: creation and scheduled pruning are enabled on reviewed host `io`,
+while `europa` and unlisted hosts remain inactive. `prune_now` additionally
+permits an immediate cleanup during the play when local pruning is enabled. See
 [`roles/pve_zfs_snapshot_policy/README.md`](roles/pve_zfs_snapshot_policy/README.md).
 
 The unattended-upgrades role is explicitly excluded from PVE inventory hosts.

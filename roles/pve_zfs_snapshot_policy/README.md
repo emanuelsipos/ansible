@@ -41,23 +41,29 @@ automatic snapshots. All five package cron files are preserved under local
 restoring duplicate jobs. Remove those diversions explicitly when
 decommissioning the role.
 
-Creation and pruning are both disabled by default. This prevents unbounded
-snapshot growth while a candidate report is being reviewed. With
-`pve_zfs_snapshot_policy_report_prune_candidates: true`, deployment reports a
-bounded list without creating or deleting anything. Enable bounded creation and
-scheduled retention together only after reviewing that report:
+Creation jobs pass `--skip-scrub`, so a pool with an active scrub is excluded
+without pausing snapshot creation on other pools.
+
+`pve_zfs_snapshot_policy_host_activation` is empty by default, so every host is
+inactive and deployment only reports bounded prune candidates. Each configured
+inventory hostname must contain exactly the boolean `creation_enabled` and
+`prune_enabled` values. Creation can be staged before retention; pruning always
+requires creation. For example, the PVE group enables creation and retention on
+reviewed host `io`, leaving `europa` and unlisted future hosts inactive:
 
 ```yaml
-pve_zfs_snapshot_policy_creation_enabled: true
-pve_zfs_snapshot_policy_prune_enabled: true
-pve_zfs_snapshot_policy_prune_schedule: "10 4 * * *"
+pve_zfs_snapshot_policy_host_activation:
+  io:
+    creation_enabled: true
+    prune_enabled: true
 ```
 
-The role requires `creation_enabled` and `prune_enabled` to match. This prevents
-both deletion without replacement snapshots and creation without bounded
-retention.
+Do not add another host until its report and short creation-only stage have been
+reviewed. The prune schedule is used only where local pruning is enabled. Run it
+after every frequent creation interval so tier keep counts remain bounded; use
+different minutes from every creation tier to avoid routine overlap.
 
-An immediate cleanup additionally requires:
+An immediate cleanup additionally requires local pruning to be enabled and:
 
 ```yaml
 pve_zfs_snapshot_policy_prune_now: true
@@ -68,8 +74,21 @@ recognizes only snapshots named
 `zfs-auto-snap_<configured-tier>-...`. Proxmox `__base__` and `__replicate_*`
 snapshots, plus manually named snapshots, are outside that namespace and remain
 untouched. It never uses recursive or forced destruction. Held, cloned, or
-otherwise undeletable snapshots are reported as failures. A false tier keeps
-zero automatic snapshots for that tier once pruning is explicitly enabled.
+otherwise undeletable snapshots are reported as failures. Before any deletion,
+it identifies candidate pools with an active or paused scrub/resilver and skips
+their candidates, then dry-runs every candidate on idle pools with
+`zfs destroy -n`. A preflight blocker prevents all deletions selected for that
+run. It holds the automatic scrub launcher's lock from scan inspection through
+deletion, preventing a new managed scrub from starting during the operation. It
+stops at the first actual destroy failure. `--preflight` performs the same checks
+without deletion, and `--expect-manifest-sha256` can bind a manual operation to
+the candidate-name digest printed by the helper. A false tier keeps zero
+automatic snapshots for that tier once pruning is explicitly enabled.
+
+Direct `zpool scrub` commands do not participate in this advisory lock. Do not
+start one during the prune window; use
+`flock --exclusive /run/lock/pve-zfs-scrub.lock zpool scrub <pool>` for a manual
+start so it coordinates with managed pruning.
 
 Deploy a node through Semaphore or locally with:
 

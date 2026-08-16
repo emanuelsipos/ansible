@@ -35,14 +35,35 @@
         data3/karakeep: app
         data3/proxmox: disabled
         data3/proxmox-backup-server: disabled
-    pve_zfs_snapshot_policy_prune_schedule: "10 4 * * *"
+    pve_zfs_snapshot_policy_prune_schedule: "7,22,37,56 * * * *"
   tasks:
     - name: Read explicit automatic snapshot cron policy
       ansible.builtin.slurp:
         src: /etc/cron.d/zfs-auto-snapshot
       register: pve_zfs_snapshot_policy_cron
 
-    - name: Verify report-only explicit opt-in cron policy
+    - name: Verify io starts with creation and bounded pruning enabled
+      ansible.builtin.assert:
+        that:
+          - >-
+            (pve_zfs_snapshot_policy_cron.content | b64decode)
+            is search('--default-exclude')
+          - >-
+            (pve_zfs_snapshot_policy_cron.content | b64decode)
+            is search('--label=frequent')
+          - >-
+            (pve_zfs_snapshot_policy_cron.content | b64decode)
+            is search('--skip-scrub')
+          - >-
+            (pve_zfs_snapshot_policy_cron.content | b64decode)
+            is search('pve-zfs-snapshot-prune --execute')
+          - >-
+            (pve_zfs_snapshot_policy_cron.content | b64decode)
+            is search('7,22,37,56 \* \* \* \* root '
+            '.*pve-zfs-snapshot-prune --execute')
+      when: inventory_hostname == 'io'
+
+    - name: Verify europa starts inactive
       ansible.builtin.assert:
         that:
           - >-
@@ -51,15 +72,22 @@
           - >-
             (pve_zfs_snapshot_policy_cron.content | b64decode)
             is not search('--default-exclude')
-          - >-
-            (pve_zfs_snapshot_policy_cron.content | b64decode)
-            is not search('--label=frequent')
+      when: inventory_hostname == 'europa'
+
+    - name: Verify initial cron has no native pruning
+      ansible.builtin.assert:
+        that:
           - >-
             (pve_zfs_snapshot_policy_cron.content | b64decode)
             is not search('--keep=')
+
+    - name: Verify helper pruning remains inactive on europa
+      ansible.builtin.assert:
+        that:
           - >-
             (pve_zfs_snapshot_policy_cron.content | b64decode)
             is not search('pve-zfs-snapshot-prune --execute')
+      when: inventory_hostname == 'europa'
 
     - name: Inspect package automatic snapshot cron diversions
       ansible.builtin.command:
@@ -191,12 +219,75 @@
         that:
           - not pve_zfs_snapshot_policy_default_destroy_log.stat.exists
 
+    - name: Verify pruning-only activation is rejected
+      when: inventory_hostname == 'io'
+      block:
+        - name: Attempt invalid pruning-only activation
+          ansible.builtin.include_role:
+            name: pve_zfs_snapshot_policy
+          vars:
+            pve_zfs_snapshot_policy_host_activation:
+              io:
+                creation_enabled: false
+                prune_enabled: true
+
+        - name: Fail when invalid pruning-only activation was accepted
+          ansible.builtin.fail:
+            msg: Pruning-only activation was accepted
+      rescue:
+        - name: Record pruning-only activation validation result
+          ansible.builtin.set_fact:
+            _pve_zfs_snapshot_policy_pruning_only_rejected: >-
+              {{
+                ansible_failed_task.name
+                is search('Validate ZFS snapshot policy host activation')
+              }}
+
+    - name: Assert pruning-only activation was rejected by validation
+      ansible.builtin.assert:
+        that:
+          - _pve_zfs_snapshot_policy_pruning_only_rejected | default(false)
+      when: inventory_hostname == 'io'
+
+    - name: Verify prune_now requires local pruning
+      when: inventory_hostname == 'io'
+      block:
+        - name: Attempt prune_now without local pruning
+          ansible.builtin.include_role:
+            name: pve_zfs_snapshot_policy
+          vars:
+            pve_zfs_snapshot_policy_host_activation:
+              io:
+                creation_enabled: true
+                prune_enabled: false
+            pve_zfs_snapshot_policy_prune_now: true
+
+        - name: Fail when prune_now was accepted without local pruning
+          ansible.builtin.fail:
+            msg: prune_now was accepted without local pruning
+      rescue:
+        - name: Record prune_now validation result
+          ansible.builtin.set_fact:
+            _pve_zfs_snapshot_policy_prune_now_rejected: >-
+              {{
+                ansible_failed_task.name
+                is search('Validate local ZFS snapshot activation gates')
+              }}
+
+    - name: Assert prune_now requires local pruning
+      ansible.builtin.assert:
+        that:
+          - _pve_zfs_snapshot_policy_prune_now_rejected | default(false)
+      when: inventory_hostname == 'io'
+
     - name: Exercise explicitly enabled immediate pruning on io
       ansible.builtin.include_role:
         name: pve_zfs_snapshot_policy
       vars:
-        pve_zfs_snapshot_policy_creation_enabled: true
-        pve_zfs_snapshot_policy_prune_enabled: true
+        pve_zfs_snapshot_policy_host_activation:
+          io:
+            creation_enabled: true
+            prune_enabled: true
         pve_zfs_snapshot_policy_prune_now: true
       when: inventory_hostname == 'io'
 
@@ -218,6 +309,9 @@
           - >-
             (pve_zfs_snapshot_policy_prune_cron.content | b64decode)
             is search('pve-zfs-snapshot-prune --execute')
+          - >-
+            (pve_zfs_snapshot_policy_prune_cron.content | b64decode)
+            is search('--label=frequent')
           - >-
             (pve_zfs_snapshot_policy_prune_cron.content | b64decode)
             is not search('--keep=')
@@ -252,4 +346,220 @@
           - >-
             'manual-recovery' in
             (pve_zfs_snapshot_policy_remaining_snapshots.content | b64decode)
+      when: inventory_hostname == 'io'
+
+    - name: Count snapshots remaining after explicit prune
+      ansible.builtin.command:
+        argv:
+          - awk
+          - -v
+          - "prefix={{ item.prefix }}"
+          - '$1 ~ prefix { count++ } END { print count + 0 }'
+          - /run/pve-zfs-snapshot-policy-test/snapshots
+      loop:
+        - prefix: '^rpool/data/subvol-100-disk-0@zfs-auto-snap_frequent-'
+          count: 4
+        - prefix: '^rpool/data/subvol-100-disk-0@zfs-auto-snap_daily-'
+          count: 0
+        - prefix: '^data@zfs-auto-snap_daily-'
+          count: 7
+        - prefix: '^data@zfs-auto-snap_monthly-'
+          count: 0
+        - prefix: '^data3/frigate@zfs-auto-snap_hourly-'
+          count: 0
+        - prefix: '^data3/karakeep@zfs-auto-snap_monthly-'
+          count: 3
+      register: pve_zfs_snapshot_policy_retained_counts
+      changed_when: false
+      when: inventory_hostname == 'io'
+
+    - name: Verify configured keep counts after explicit prune
+      ansible.builtin.assert:
+        that:
+          - item.stdout | int == item.item.count
+      loop: "{{ pve_zfs_snapshot_policy_retained_counts.results }}"
+      loop_control:
+        label: "{{ item.item.prefix }}"
+      when: inventory_hostname == 'io'
+
+    - name: Clear destroy log before preflight failure test
+      ansible.builtin.file:
+        path: "/run/pve-zfs-snapshot-policy-test/{{ item }}"
+        state: absent
+      loop:
+        - destroyed
+        - preflighted
+      when: inventory_hostname == 'io'
+
+    - name: Add preflight test candidates
+      ansible.builtin.lineinfile:
+        path: /run/pve-zfs-snapshot-policy-test/snapshots
+        line: "{{ item }}"
+      loop:
+        - rpool/data/subvol-100-disk-0@zfs-auto-snap_daily-preflight-ok 998
+        - rpool/data/subvol-100-disk-0@zfs-auto-snap_daily-preflight-blocked 999
+      when: inventory_hostname == 'io'
+
+    - name: Preflight with a mismatched candidate digest
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-zfs-snapshot-prune
+          - --preflight
+          - --expect-manifest-sha256
+          - "0000000000000000000000000000000000000000000000000000000000000000"
+      register: pve_zfs_snapshot_policy_manifest_mismatch
+      changed_when: false
+      failed_when: false
+      when: inventory_hostname == 'io'
+
+    - name: Verify candidate digest mismatch prevents preflight and destruction
+      ansible.builtin.assert:
+        that:
+          - pve_zfs_snapshot_policy_manifest_mismatch.rc == 1
+          - >-
+            pve_zfs_snapshot_policy_manifest_mismatch.stderr
+            is search('manifest_mismatch=true')
+      when: inventory_hostname == 'io'
+
+    - name: Configure mock active pool scan
+      ansible.builtin.copy:
+        dest: /run/pve-zfs-snapshot-policy-test/scan_active
+        owner: root
+        group: root
+        mode: "0600"
+        content: rpool
+      when: inventory_hostname == 'io'
+
+    - name: Preflight prune while a candidate pool scan is active
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-zfs-snapshot-prune
+          - --preflight
+      register: pve_zfs_snapshot_policy_scan_failure
+      changed_when: false
+      failed_when: false
+      when: inventory_hostname == 'io'
+
+    - name: Inspect destructive activity blocked by active scan
+      ansible.builtin.stat:
+        path: "/run/pve-zfs-snapshot-policy-test/{{ item }}"
+      loop:
+        - destroyed
+        - preflighted
+      register: pve_zfs_snapshot_policy_scan_activity
+      when: inventory_hostname == 'io'
+
+    - name: Verify an active pool scan skips its candidates without destruction
+      ansible.builtin.assert:
+        that:
+          - pve_zfs_snapshot_policy_scan_failure.rc == 0
+          - >-
+            pve_zfs_snapshot_policy_scan_failure.stdout
+            is search('skipped_pool=rpool:active_scan:SCRUB:SCANNING')
+          - >-
+            pve_zfs_snapshot_policy_scan_failure.stdout
+            is search('preflight_count=0')
+          - >-
+            not pve_zfs_snapshot_policy_scan_activity.results
+            | map(attribute='stat.exists') | max
+      when: inventory_hostname == 'io'
+
+    - name: Clear mock active pool scan
+      ansible.builtin.file:
+        path: /run/pve-zfs-snapshot-policy-test/scan_active
+        state: absent
+      when: inventory_hostname == 'io'
+
+    - name: Hold the shared scrub coordination lock
+      ansible.builtin.command:
+        argv:
+          - flock
+          - --exclusive
+          - /run/lock/pve-zfs-scrub.lock
+          - sleep
+          - "5"
+      async: 10
+      poll: 0
+      register: pve_zfs_snapshot_policy_scan_lock_holder
+      changed_when: true
+      when: inventory_hostname == 'io'
+
+    - name: Wait for the shared scrub coordination lock
+      ansible.builtin.pause:
+        seconds: 1
+      when: inventory_hostname == 'io'
+
+    - name: Preflight while the shared scrub coordination lock is held
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-zfs-snapshot-prune
+          - --preflight
+      register: pve_zfs_snapshot_policy_scan_lock_failure
+      changed_when: false
+      failed_when: false
+      when: inventory_hostname == 'io'
+
+    - name: Verify the shared scrub lock prevents prune preflight
+      ansible.builtin.assert:
+        that:
+          - pve_zfs_snapshot_policy_scan_lock_failure.rc == 1
+          - >-
+            pve_zfs_snapshot_policy_scan_lock_failure.stderr
+            is search('scan_lock_unavailable=true')
+      when: inventory_hostname == 'io'
+
+    - name: Wait for the shared scrub coordination lock holder
+      ansible.builtin.async_status:
+        jid: "{{ pve_zfs_snapshot_policy_scan_lock_holder.ansible_job_id }}"
+      register: pve_zfs_snapshot_policy_scan_lock_holder_result
+      until: pve_zfs_snapshot_policy_scan_lock_holder_result is finished
+      retries: 10
+      delay: 1
+      when: inventory_hostname == 'io'
+
+    - name: Configure mock preflight blocker
+      ansible.builtin.copy:
+        dest: /run/pve-zfs-snapshot-policy-test/preflight_blocker
+        owner: root
+        group: root
+        mode: "0600"
+        content: rpool/data/subvol-100-disk-0@zfs-auto-snap_daily-preflight-blocked
+      when: inventory_hostname == 'io'
+
+    - name: Run prune with a blocked preflight
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-zfs-snapshot-prune
+          - --execute
+      register: pve_zfs_snapshot_policy_preflight_failure
+      changed_when: false
+      failed_when: false
+      when: inventory_hostname == 'io'
+
+    - name: Read preflight log after blocked preflight
+      ansible.builtin.slurp:
+        src: /run/pve-zfs-snapshot-policy-test/preflighted
+      register: pve_zfs_snapshot_policy_preflight_log
+      when: inventory_hostname == 'io'
+
+    - name: Inspect destroy log after preflight failure
+      ansible.builtin.stat:
+        path: /run/pve-zfs-snapshot-policy-test/destroyed
+      register: pve_zfs_snapshot_policy_preflight_destroy_log
+      when: inventory_hostname == 'io'
+
+    - name: Verify a preflight blocker prevents all destruction
+      ansible.builtin.assert:
+        that:
+          - pve_zfs_snapshot_policy_preflight_failure.rc == 1
+          - >-
+            pve_zfs_snapshot_policy_preflight_failure.stderr
+            is search('mock preflight blocker')
+          - >-
+            pve_zfs_snapshot_policy_preflight_log.content | b64decode
+            is search('zfs-auto-snap_daily-preflight-ok')
+          - >-
+            pve_zfs_snapshot_policy_preflight_log.content | b64decode
+            is search('zfs-auto-snap_daily-preflight-blocked')
+          - not pve_zfs_snapshot_policy_preflight_destroy_log.stat.exists
       when: inventory_hostname == 'io'

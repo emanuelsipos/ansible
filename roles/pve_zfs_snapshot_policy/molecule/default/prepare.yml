@@ -151,6 +151,16 @@
                       >>"$STATE/commands"
                   ;;
               destroy)
+                  if [[ "${2:-}" == "-n" ]]; then
+                      snapshot=${3:?snapshot is required}
+                      printf '%s\n' "$snapshot" >>"$STATE/preflighted"
+                      if [[ -e "$STATE/preflight_blocker" &&
+                          "$snapshot" == "$(<"$STATE/preflight_blocker")" ]]; then
+                          printf 'mock preflight blocker: %s\n' "$snapshot" >&2
+                          exit 1
+                      fi
+                      exit 0
+                  fi
                   snapshot=${2:?snapshot is required}
                   printf '%s\n' "$snapshot" >>"$STATE/destroyed"
                   awk -v wanted="$snapshot" '$1 != wanted' \
@@ -162,6 +172,25 @@
                   ;;
           esac
 
+    - name: Install mock zpool command
+      ansible.builtin.copy:
+        dest: /usr/sbin/zpool
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          set -euo pipefail
+          readonly STATE=/run/pve-zfs-snapshot-policy-test
+
+          [[ "${1:-}" == status && "${2:-}" == -jp ]]
+          pool=${3:?pool is required}
+          if [[ -e "$STATE/scan_active" && "$pool" == "$(<"$STATE/scan_active")" ]]; then
+              printf '{"pools":{"%s":{"scan_stats":{"function":"SCRUB","state":"SCANNING"}}}}\n' "$pool"
+          else
+              printf '{"pools":{"%s":{"scan_stats":{}}}}\n' "$pool"
+          fi
+
     - name: Install mock zfs-auto-snapshot executable
       ansible.builtin.copy:
         dest: /usr/local/sbin/zfs-auto-snapshot
@@ -171,7 +200,7 @@
         content: |
           #!/bin/sh
           if [ "${1:-}" = "--help" ]; then
-              printf '%s\n' '--default-exclude --prefix --label --syslog'
+              printf '%s\n' '--default-exclude --prefix --label --syslog --skip-scrub'
               exit 0
           fi
           printf '%s\n' "$*" >>/run/pve-zfs-snapshot-policy-test/auto-snapshot
