@@ -29,6 +29,7 @@ jobs:
           - pve_host_backup
           - pve_maintenance
           - pve_peer_reboot
+          - pve_resource_scheduling
           - pve_update_policy
           - sysctl
           - vzdump

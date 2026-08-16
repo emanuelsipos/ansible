@@ -1,0 +1,144 @@
+#!/bin/bash
+# Managed by Ansible role pve_resource_scheduling.
+
+set -euo pipefail
+export LC_ALL=C
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+readonly CYCLE_SECONDS={{ _pve_resource_scheduling_scrub_policy.cycle_days | int * 86400 }}
+readonly LOCK_FILE=/run/lock/pve-zfs-scrub.lock
+
+log() {
+    logger --tag pve-zfs-scrub -- "$*" 2>/dev/null || true
+    printf '%s\n' "pve-zfs-scrub: $*"
+}
+
+scans_are_idle() {
+    local status
+
+    if ! status=$(zpool status 2>/dev/null); then
+        log "cannot inspect existing pool scans; skipping"
+        return 1
+    fi
+    if grep -Eq '^[[:space:]]*scan:[[:space:]]*(scrub|resilver) (in progress|paused)' <<<"$status"; then
+        log "a pool scan is already active; leaving it untouched"
+        return 1
+    fi
+}
+
+install --directory --mode=0755 /run/lock
+exec 9>"$LOCK_FILE"
+if ! flock --exclusive --nonblock 9; then
+    log "another automatic scrub preflight is running; skipping"
+    exit 0
+fi
+
+if ! scans_are_idle; then
+    exit 0
+fi
+
+mapfile -t pools < <(
+    zpool list -H -o name,health |
+        awk '$2 == "ONLINE" && $1 ~ /^[A-Za-z0-9][A-Za-z0-9_.-]*$/ { print $1 }'
+)
+pool_count=0
+for pool in "${pools[@]}"; do
+    ((pool_count += 1))
+done
+if (( pool_count == 0 )); then
+    log "no healthy ZFS pools were discovered"
+    exit 0
+fi
+
+now=$(date +%s)
+minimum_spacing_seconds=$(( CYCLE_SECONDS / pool_count ))
+selected_pool=
+selected_epoch=$now
+latest_scan_start=0
+
+for pool in "${pools[@]}"; do
+    if ! scan_json=$(zpool status -jp "$pool" 2>/dev/null); then
+        log "cannot inspect scan history for $pool; skipping this run"
+        exit 0
+    fi
+
+    if ! scan_summary=$(python3 -c '
+import json
+import re
+import sys
+
+try:
+    pool = sys.argv[1]
+    scan = json.load(sys.stdin).get("pools", {})[pool].get("scan_stats", {})
+    if not isinstance(scan, dict):
+        raise ValueError("scan stats are not an object")
+
+    function = scan.get("function", "NONE")
+    state = scan.get("state", "NONE")
+    if function in (None, "", "-", "NONE"):
+        print("NONE\tNONE\t0")
+        raise SystemExit(0)
+    if not isinstance(function, str) or not re.fullmatch(r"[A-Za-z_]+", function):
+        raise ValueError("invalid scan function")
+    if not isinstance(state, str) or not re.fullmatch(r"[A-Za-z_]+", state):
+        raise ValueError("invalid scan state")
+
+    start = scan.get("start_time")
+    if isinstance(start, bool) or not isinstance(start, (int, float, str)):
+        raise ValueError("invalid scan start time")
+    if isinstance(start, str) and not start.isdigit():
+        raise ValueError("invalid scan start time")
+    start = int(start)
+    if start <= 0:
+        raise ValueError("invalid scan start time")
+    print(function.upper(), state.upper(), start, sep="\t")
+except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+' "$pool" <<<"$scan_json"); then
+        log "cannot parse scan history for $pool; skipping this run"
+        exit 0
+    fi
+    IFS=$'\t' read -r scan_function scan_state scan_start <<<"$scan_summary"
+
+    if [[ "$scan_function" == "SCRUB" || "$scan_function" == "RESILVER" ]]; then
+        case "$scan_state" in
+            SCANNING|PAUSED|IN_PROGRESS)
+                log "a pool scan is already active; leaving it untouched"
+                exit 0
+                ;;
+        esac
+    fi
+
+    if (( scan_start > latest_scan_start )); then
+        latest_scan_start=$scan_start
+    fi
+
+    last_completed_scrub_start=0
+    if [[ "$scan_function" == "SCRUB" && "$scan_state" == "FINISHED" ]]; then
+        last_completed_scrub_start=$scan_start
+    fi
+
+    if (( now - last_completed_scrub_start < CYCLE_SECONDS )); then
+        continue
+    fi
+    if [[ -z "$selected_pool" || last_completed_scrub_start -lt selected_epoch ]]; then
+        selected_pool=$pool
+        selected_epoch=$last_completed_scrub_start
+    fi
+done
+
+if [[ -z "$selected_pool" ]]; then
+    log "all healthy pools were scrubbed within the target cycle"
+    exit 0
+fi
+
+if (( now - latest_scan_start < minimum_spacing_seconds )); then
+    log "the latest pool scan is newer than the derived spacing; skipping"
+    exit 0
+fi
+
+if ! scans_are_idle; then
+    exit 0
+fi
+
+zpool scrub "$selected_pool"
+log "started the most overdue scrub for $selected_pool"

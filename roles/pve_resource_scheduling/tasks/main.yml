@@ -1,0 +1,170 @@
+---
+- name: Validate PVE scrub scheduling policy
+  ansible.builtin.assert:
+    that:
+      - pve_resource_scheduling_scrub_policies is mapping
+      - pve_resource_scheduling_scrub_script_path == '/usr/local/sbin/pve-zfs-scrub'
+      - pve_resource_scheduling_scrub_service == 'pve-zfs-scrub.service'
+      - pve_resource_scheduling_scrub_timer == 'pve-zfs-scrub.timer'
+    quiet: true
+    fail_msg: PVE scrub scheduling policy must use safe canonical values
+  tags: [pve, scrub]
+
+- name: Validate PVE scrub scheduling host keys
+  ansible.builtin.assert:
+    that:
+      - item.key is string
+      - item.key is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - item.value is mapping
+    quiet: true
+    fail_msg: PVE scrub scheduling host keys and policies must be safe mappings
+  loop: "{{ pve_resource_scheduling_scrub_policies | dict2items }}"
+  loop_control:
+    label: "{{ item.key | default('invalid') }}"
+  tags: [pve, scrub]
+
+- name: Validate local PVE inventory hostname
+  ansible.builtin.assert:
+    that:
+      - inventory_hostname is string
+      - inventory_hostname is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+    quiet: true
+    fail_msg: PVE scrub scheduling requires a safe short inventory hostname
+  tags: [pve, scrub]
+
+- name: Select local PVE scrub policy
+  ansible.builtin.set_fact:
+    _pve_resource_scheduling_scrub_policy: >-
+      {{ pve_resource_scheduling_scrub_policies.get(inventory_hostname, {}) }}
+  tags: [pve, scrub]
+
+- name: Configure automatic ZFS scrub cycling
+  when: _pve_resource_scheduling_scrub_policy | length > 0
+  tags: [pve, scrub]
+  block:
+    - name: Validate local automatic scrub policy
+      ansible.builtin.assert:
+        that:
+          - _pve_resource_scheduling_scrub_policy.calendar is defined
+          - _pve_resource_scheduling_scrub_policy.calendar is string
+          - _pve_resource_scheduling_scrub_policy.calendar | length > 0
+          - not _pve_resource_scheduling_scrub_policy.calendar is search('[\r\n]')
+          - _pve_resource_scheduling_scrub_policy.cycle_days is defined
+          - _pve_resource_scheduling_scrub_policy.cycle_days is integer
+          - _pve_resource_scheduling_scrub_policy.cycle_days | int >= 21
+          - _pve_resource_scheduling_scrub_policy.cycle_days | int <= 42
+        quiet: true
+        fail_msg: >-
+          Automatic scrub policy requires a calendar and an integer cycle_days
+          between 21 and 42
+
+    - name: Validate automatic scrub calendar with systemd
+      ansible.builtin.command:
+        argv:
+          - systemd-analyze
+          - calendar
+          - "{{ _pve_resource_scheduling_scrub_policy.calendar }}"
+      changed_when: false
+
+    - name: Read local PVE hostname before applying scrub policy
+      ansible.builtin.command:
+        argv:
+          - hostname
+          - --short
+      register: _pve_resource_scheduling_local_hostname
+      changed_when: false
+
+    - name: Assert local PVE hostname matches the scrub policy host key
+      ansible.builtin.assert:
+        that:
+          - _pve_resource_scheduling_local_hostname.stdout == inventory_hostname
+        quiet: true
+        fail_msg: >-
+          Refusing to apply PVE scrub scheduling because the local hostname
+          does not match inventory_hostname
+
+    - name: Discover local ZFS pools
+      ansible.builtin.command:
+        argv:
+          - zpool
+          - list
+          - -H
+          - -o
+          - name
+      register: _pve_resource_scheduling_pool_list
+      changed_when: false
+
+    - name: Validate discovered ZFS pools
+      ansible.builtin.assert:
+        that:
+          - _pve_resource_scheduling_pool_list.stdout_lines | length > 0
+          - item is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+        quiet: true
+        fail_msg: Refusing an empty or unsafe discovered ZFS pool list
+      loop: "{{ _pve_resource_scheduling_pool_list.stdout_lines }}"
+      loop_control:
+        label: "{{ item | default('invalid') }}"
+
+    - name: Install automatic ZFS scrub scheduler
+      ansible.builtin.template:
+        src: pve-zfs-scrub.sh.j2
+        dest: "{{ pve_resource_scheduling_scrub_script_path }}"
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Install automatic ZFS scrub service
+      ansible.builtin.template:
+        src: pve-zfs-scrub.service.j2
+        dest: "/etc/systemd/system/{{ pve_resource_scheduling_scrub_service }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd for PVE resource scheduling
+
+    - name: Install automatic ZFS scrub timer
+      ansible.builtin.template:
+        src: pve-zfs-scrub.timer.j2
+        dest: "/etc/systemd/system/{{ pve_resource_scheduling_scrub_timer }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd for PVE resource scheduling
+
+    - name: Apply automatic ZFS scrub systemd unit changes
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start automatic ZFS scrub timer
+      ansible.builtin.systemd_service:
+        name: "{{ pve_resource_scheduling_scrub_timer }}"
+        enabled: true
+        state: started
+
+    - name: Inspect periodic scrub setting for discovered pools
+      ansible.builtin.command:
+        argv:
+          - zfs
+          - get
+          - -H
+          - -o
+          - value
+          - org.debian:periodic-scrub
+          - "{{ item }}"
+      changed_when: false
+      loop: "{{ _pve_resource_scheduling_pool_list.stdout_lines }}"
+      loop_control:
+        label: "{{ item }}"
+      register: _pve_resource_scheduling_scrub_properties
+
+    - name: Disable Debian all-pools periodic scrub for discovered pools
+      ansible.builtin.command:
+        argv:
+          - zfs
+          - set
+          - org.debian:periodic-scrub=disable
+          - "{{ item.item }}"
+      changed_when: true
+      when: item.stdout != 'disable'
+      loop: "{{ _pve_resource_scheduling_scrub_properties.results }}"
+      loop_control:
+        label: "{{ item.item }}"

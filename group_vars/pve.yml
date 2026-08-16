@@ -19,6 +19,14 @@ zram_devices:
     swap_priority: 100
 zram_swappiness: 10
 
+# Debian's packaged scrub helper starts every pool together. Evaluate io daily,
+# but target a 28-day cycle for each discovered pool. Prefer a late scrub over
+# overlapping pool scans.
+pve_resource_scheduling_scrub_policies:
+  io:
+    calendar: "*-*-* 05:00:00"
+    cycle_days: 28
+
 vzdump_extra_exclude_paths:
   - /opt/docker/birdnet/data/clips
 

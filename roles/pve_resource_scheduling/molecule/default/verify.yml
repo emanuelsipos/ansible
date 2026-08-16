@@ -1,0 +1,347 @@
+---
+- name: Verify PVE resource scheduling
+  hosts: all
+  vars:
+    pve_resource_scheduling_scrub_policies:
+      io:
+        calendar: "*-*-* 05:00:00"
+        cycle_days: 28
+  tasks:
+    - name: Inspect automatic scrub files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /usr/local/sbin/pve-zfs-scrub
+        - /etc/systemd/system/pve-zfs-scrub.service
+        - /etc/systemd/system/pve-zfs-scrub.timer
+      register: pve_resource_scheduling_files
+
+    - name: Verify one automatic scrub unit pair and launcher modes
+      ansible.builtin.assert:
+        that:
+          - pve_resource_scheduling_files.results | map(attribute='stat.exists') | min
+          - pve_resource_scheduling_files.results[0].stat.mode == '0700'
+          - pve_resource_scheduling_files.results[1].stat.mode == '0644'
+          - pve_resource_scheduling_files.results[2].stat.mode == '0644'
+
+    - name: Verify no fixed-pool scrub units were created
+      ansible.builtin.find:
+        paths: /etc/systemd/system
+        patterns:
+          - pve-zfs-scrub-*.service
+          - pve-zfs-scrub-*.timer
+        file_type: file
+        recurse: false
+      register: pve_resource_scheduling_fixed_pool_units
+
+    - name: Assert no fixed-pool scrub units were created
+      ansible.builtin.assert:
+        that:
+          - pve_resource_scheduling_fixed_pool_units.matched == 0
+
+    - name: Check automatic scrub launcher shell syntax
+      ansible.builtin.command:
+        argv:
+          - bash
+          - -n
+          - /usr/local/sbin/pve-zfs-scrub
+      changed_when: false
+
+    - name: Check automatic scrub systemd unit syntax
+      ansible.builtin.command:
+        argv:
+          - systemd-analyze
+          - verify
+          - /etc/systemd/system/pve-zfs-scrub.service
+          - /etc/systemd/system/pve-zfs-scrub.timer
+      changed_when: false
+
+    - name: Read automatic scrub timer
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/pve-zfs-scrub.timer
+      register: pve_resource_scheduling_timer
+
+    - name: Verify daily non-persistent automatic scrub timer
+      ansible.builtin.assert:
+        that:
+          - >-
+            'OnCalendar=*-*-* 05:00:00' in
+            (pve_resource_scheduling_timer.content | b64decode)
+          - "'Persistent=false' in (pve_resource_scheduling_timer.content | b64decode)"
+          - "'Unit=pve-zfs-scrub.service' in (pve_resource_scheduling_timer.content | b64decode)"
+
+    - name: Inspect enabled automatic scrub timer
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-enabled
+          - pve-zfs-scrub.timer
+      changed_when: false
+
+    - name: Read periodic scrub property state for every discovered pool
+      ansible.builtin.slurp:
+        src: "/run/pve-resource-scheduling-test/property-{{ item }}"
+      loop:
+        - rpool
+        - data2
+        - data3
+        - data
+      register: pve_resource_scheduling_properties
+
+    - name: Verify Debian periodic scrubs are disabled for every discovered pool
+      ansible.builtin.assert:
+        that:
+          - >-
+            pve_resource_scheduling_properties.results
+            | map(attribute='content') | map('b64decode') | map('trim')
+            | unique | list == ['disable']
+
+    - name: Run automatic scrub launcher to select the oldest due pool
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-zfs-scrub
+      changed_when: false
+
+    - name: Read oldest due scrub launch
+      ansible.builtin.slurp:
+        src: /run/pve-resource-scheduling-test/scrub-launches
+      register: pve_resource_scheduling_oldest_launch
+
+    - name: Verify the oldest due pool was selected
+      ansible.builtin.assert:
+        that:
+          - (pve_resource_scheduling_oldest_launch.content | b64decode | trim) == 'rpool'
+
+    - name: Run automatic scrub launcher before derived spacing has elapsed
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-zfs-scrub
+      changed_when: false
+
+    - name: Read launches after derived spacing check
+      ansible.builtin.slurp:
+        src: /run/pve-resource-scheduling-test/scrub-launches
+      register: pve_resource_scheduling_spacing_launches
+
+    - name: Verify derived spacing prevents clustered launches
+      ansible.builtin.assert:
+        that:
+          - (pve_resource_scheduling_spacing_launches.content | b64decode | trim) == 'rpool'
+
+    - name: Reset scrub launches
+      ansible.builtin.file:
+        path: /run/pve-resource-scheduling-test/scrub-launches
+        state: absent
+
+    - name: Set every pool to a recent completed scrub
+      ansible.builtin.copy:
+        dest: /run/pve-resource-scheduling-test/pools
+        mode: "0600"
+        content: |
+          rpool ONLINE SCRUB FINISHED 10
+          data2 ONLINE SCRUB FINISHED 1
+          data3 ONLINE SCRUB FINISHED 1
+          data ONLINE SCRUB FINISHED 1
+
+    - name: Run automatic scrub launcher with no due pools
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-zfs-scrub
+      changed_when: false
+
+    - name: Verify recent scrubs cause no launch
+      ansible.builtin.stat:
+        path: /run/pve-resource-scheduling-test/scrub-launches
+      register: pve_resource_scheduling_recent_launches
+
+    - name: Assert recent scrubs cause no launch
+      ansible.builtin.assert:
+        that:
+          - not pve_resource_scheduling_recent_launches.stat.exists
+
+    - name: Set a recent completed resilver fixture
+      ansible.builtin.copy:
+        dest: /run/pve-resource-scheduling-test/pools
+        mode: "0600"
+        content: |
+          rpool ONLINE SCRUB FINISHED 45
+          data2 ONLINE RESILVER FINISHED 1
+          data3 ONLINE SCRUB FINISHED 45
+          data ONLINE SCRUB FINISHED 45
+
+    - name: Run automatic scrub launcher after a completed resilver
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-zfs-scrub
+      changed_when: false
+
+    - name: Verify recent completed resilver delays the next scrub
+      ansible.builtin.stat:
+        path: /run/pve-resource-scheduling-test/scrub-launches
+      register: pve_resource_scheduling_recent_resilver_launches
+
+    - name: Assert recent completed resilver delays the next scrub
+      ansible.builtin.assert:
+        that:
+          - not pve_resource_scheduling_recent_resilver_launches.stat.exists
+
+    - name: Set an active scrub fixture
+      ansible.builtin.copy:
+        dest: /run/pve-resource-scheduling-test/pools
+        mode: "0600"
+        content: |
+          rpool ONLINE SCRUB PAUSED 1
+          data2 ONLINE SCRUB FINISHED 45
+          data3 ONLINE SCRUB FINISHED 45
+          data ONLINE SCRUB FINISHED 45
+
+    - name: Run automatic scrub launcher while a scrub is paused
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-zfs-scrub
+      changed_when: false
+
+    - name: Verify active scrub causes no launch
+      ansible.builtin.stat:
+        path: /run/pve-resource-scheduling-test/scrub-launches
+      register: pve_resource_scheduling_active_scrub_launches
+
+    - name: Assert active scrub causes no launch
+      ansible.builtin.assert:
+        that:
+          - not pve_resource_scheduling_active_scrub_launches.stat.exists
+
+    - name: Set an active resilver fixture
+      ansible.builtin.copy:
+        dest: /run/pve-resource-scheduling-test/pools
+        mode: "0600"
+        content: |
+          rpool ONLINE RESILVER IN_PROGRESS 1
+          data2 ONLINE SCRUB FINISHED 45
+          data3 ONLINE SCRUB FINISHED 45
+          data ONLINE SCRUB FINISHED 45
+
+    - name: Run automatic scrub launcher while a resilver is active
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-zfs-scrub
+      changed_when: false
+
+    - name: Verify active resilver causes no launch
+      ansible.builtin.stat:
+        path: /run/pve-resource-scheduling-test/scrub-launches
+      register: pve_resource_scheduling_active_resilver_launches
+
+    - name: Assert active resilver causes no launch
+      ansible.builtin.assert:
+        that:
+          - not pve_resource_scheduling_active_resilver_launches.stat.exists
+
+    - name: Set an unhealthy-pool selection fixture
+      ansible.builtin.copy:
+        dest: /run/pve-resource-scheduling-test/pools
+        mode: "0600"
+        content: |
+          rpool DEGRADED SCRUB FINISHED 60
+          data2 ONLINE SCRUB FINISHED 45
+          data3 ONLINE SCRUB FINISHED 30
+          data ONLINE SCRUB FINISHED 30
+
+    - name: Run automatic scrub launcher with an unhealthy oldest pool
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-zfs-scrub
+      changed_when: false
+
+    - name: Read healthy-pool selection launch
+      ansible.builtin.slurp:
+        src: /run/pve-resource-scheduling-test/scrub-launches
+      register: pve_resource_scheduling_healthy_selection
+
+    - name: Verify unhealthy pools are excluded
+      ansible.builtin.assert:
+        that:
+          - (pve_resource_scheduling_healthy_selection.content | b64decode | trim) == 'data2'
+
+    - name: Reset launches before invalid-status safety check
+      ansible.builtin.file:
+        path: /run/pve-resource-scheduling-test/scrub-launches
+        state: absent
+
+    - name: Mark an eligible pool scan status invalid
+      ansible.builtin.file:
+        path: /run/pve-resource-scheduling-test/invalid-data3
+        state: touch
+        mode: "0600"
+
+    - name: Run automatic scrub launcher with invalid eligible pool status
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-zfs-scrub
+      changed_when: false
+
+    - name: Verify invalid pool status causes no launch
+      ansible.builtin.stat:
+        path: /run/pve-resource-scheduling-test/scrub-launches
+      register: pve_resource_scheduling_invalid_status_launches
+
+    - name: Assert invalid pool status causes no launch
+      ansible.builtin.assert:
+        that:
+          - not pve_resource_scheduling_invalid_status_launches.stat.exists
+
+    - name: Add a newly discovered healthy pool without changing policy
+      ansible.builtin.copy:
+        dest: /run/pve-resource-scheduling-test/pools
+        mode: "0600"
+        content: |
+          rpool ONLINE SCRUB FINISHED 30
+          data2 ONLINE SCRUB FINISHED 30
+          data3 ONLINE SCRUB FINISHED 30
+          data ONLINE SCRUB FINISHED 30
+          newpool ONLINE SCRUB FINISHED 45
+
+    - name: Clear invalid-status fixture
+      ansible.builtin.file:
+        path: /run/pve-resource-scheduling-test/invalid-data3
+        state: absent
+
+    - name: Reapply scrub scheduling to discover the new pool
+      ansible.builtin.include_role:
+        name: pve_resource_scheduling
+
+    - name: Read periodic scrub property state for newly discovered pool
+      ansible.builtin.slurp:
+        src: /run/pve-resource-scheduling-test/property-newpool
+      register: pve_resource_scheduling_new_pool_property
+
+    - name: Verify new pool is discovered without policy changes
+      ansible.builtin.assert:
+        that:
+          - (pve_resource_scheduling_new_pool_property.content | b64decode | trim) == 'disable'
+
+    - name: Run automatic scrub launcher to select newly discovered pool
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-zfs-scrub
+      changed_when: false
+
+    - name: Read newly discovered pool launch
+      ansible.builtin.slurp:
+        src: /run/pve-resource-scheduling-test/scrub-launches
+      register: pve_resource_scheduling_new_pool_launch
+
+    - name: Verify newly discovered pool is scheduled
+      ansible.builtin.assert:
+        that:
+          - (pve_resource_scheduling_new_pool_launch.content | b64decode | trim) == 'newpool'
+
+    - name: Reapply scrub scheduling to verify idempotence
+      ansible.builtin.include_role:
+        name: pve_resource_scheduling
+      register: pve_resource_scheduling_idempotence
+
+    - name: Assert scrub scheduling is idempotent
+      ansible.builtin.assert:
+        that:
+          - not pve_resource_scheduling_idempotence.changed

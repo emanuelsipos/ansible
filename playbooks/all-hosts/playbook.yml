@@ -91,6 +91,8 @@
         sysctl_drop_in_file: "{{ pve_sysctl_drop_in_file }}"
     - role: zram
       tags: [zram]
+    - role: pve_resource_scheduling
+      tags: [scrub]
     - role: brianhartsock.smartmontools
       tags: [smart]
     - role: vzdump

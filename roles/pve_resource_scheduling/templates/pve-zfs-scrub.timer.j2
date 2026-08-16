@@ -1,0 +1,11 @@
+# Managed by Ansible role pve_resource_scheduling.
+[Unit]
+Description=Daily automatic ZFS pool scrub cycle
+
+[Timer]
+OnCalendar={{ _pve_resource_scheduling_scrub_policy.calendar }}
+Persistent=false
+Unit={{ pve_resource_scheduling_scrub_service }}
+
+[Install]
+WantedBy=timers.target

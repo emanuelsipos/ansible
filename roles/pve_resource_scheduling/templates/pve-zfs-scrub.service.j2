@@ -1,0 +1,16 @@
+# Managed by Ansible role pve_resource_scheduling.
+[Unit]
+Description=Start at most one overdue ZFS pool scrub
+
+[Service]
+Type=oneshot
+ExecStart={{ pve_resource_scheduling_scrub_script_path }}
+TimeoutStartSec=5min
+User=root
+Group=root
+UMask=0077
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true
+StandardOutput=journal
+StandardError=journal

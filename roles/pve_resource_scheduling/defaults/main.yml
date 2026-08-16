@@ -1,0 +1,8 @@
+---
+# Policies are keyed by the short PVE inventory hostname. Each configured host
+# discovers its ZFS pools at runtime and starts at most one overdue scrub daily.
+pve_resource_scheduling_scrub_policies: {}
+
+pve_resource_scheduling_scrub_script_path: /usr/local/sbin/pve-zfs-scrub
+pve_resource_scheduling_scrub_service: pve-zfs-scrub.service
+pve_resource_scheduling_scrub_timer: pve-zfs-scrub.timer

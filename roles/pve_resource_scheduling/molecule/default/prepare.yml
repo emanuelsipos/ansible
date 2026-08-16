@@ -1,0 +1,110 @@
+---
+- name: Prepare PVE resource scheduling command mocks
+  hosts: all
+  tasks:
+    - name: Create PVE resource scheduling mock state directory
+      ansible.builtin.file:
+        path: /run/pve-resource-scheduling-test
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Seed mock ZFS pools
+      ansible.builtin.copy:
+        dest: /run/pve-resource-scheduling-test/pools
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          rpool ONLINE SCRUB FINISHED 45
+          data2 ONLINE SCRUB FINISHED 40
+          data3 ONLINE SCRUB FINISHED 35
+          data ONLINE SCRUB FINISHED 30
+
+    - name: Install PVE resource scheduling command mocks
+      ansible.builtin.copy:
+        content: |
+          #!/bin/bash
+          set -euo pipefail
+          readonly STATE=/run/pve-resource-scheduling-test
+          readonly POOLS="$STATE/pools"
+          command=$(basename "$0")
+
+          pool_line() {
+              awk -v wanted="$1" '$1 == wanted { print; exit }' "$POOLS"
+          }
+
+          case "$command" in
+              hostname)
+                  printf '%s\n' io
+                  ;;
+              zfs)
+                  if [[ "$1" == get ]]; then
+                      pool=${@: -1}
+                      property_file="$STATE/property-$pool"
+                      [[ -e "$property_file" ]] && cat "$property_file" || printf '%s\n' '-'
+                  elif [[ "$1" == set ]]; then
+                      property=${2#org.debian:periodic-scrub=}
+                      printf '%s\n' "$property" >"$STATE/property-${3}"
+                  else
+                      exit 2
+                  fi
+                  ;;
+              zpool)
+                  if [[ "$1" == list && "$4" == name ]]; then
+                      awk '{ print $1 }' "$POOLS"
+                  elif [[ "$1" == list && "$4" == name,health ]]; then
+                      awk '{ print $1, $2 }' "$POOLS"
+                   elif [[ "$1" == status && "${2:-}" == -jp ]]; then
+                      pool=${3:?pool is required}
+                      if [[ -e "$STATE/invalid-$pool" ]]; then
+                          printf '%s\n' '{invalid json'
+                          exit 0
+                      fi
+                      read -r name health function scan_state age <<<"$(pool_line "$pool")"
+                      [[ "$name" == "$pool" ]] || exit 1
+                      if [[ "$function" == NONE ]]; then
+                          printf '{"pools":{"%s":{"scan_stats":{}}}}\n' "$pool"
+                      else
+                          start=$(( $(date +%s) - age * 86400 ))
+                           printf '{"pools":{"%s":{"scan_stats":{"function":"%s","state":"%s","start_time":"%s"}}}}\n' \
+                              "$pool" "$function" "$scan_state" "$start"
+                      fi
+                  elif [[ "$1" == status ]]; then
+                      while read -r pool health function scan_state age; do
+                          if [[ "$function" == SCRUB || "$function" == RESILVER ]]; then
+                              case "$scan_state" in
+                                  SCANNING|IN_PROGRESS)
+                                      printf '  scan: %s in progress since now\n' "${function,,}"
+                                      ;;
+                                  PAUSED)
+                                      printf '  scan: %s paused since now\n' "${function,,}"
+                                      ;;
+                              esac
+                          fi
+                      done <"$POOLS"
+                  elif [[ "$1" == scrub ]]; then
+                      pool=${2:?pool is required}
+                      awk -v wanted="$pool" '
+                          $1 == wanted { print $1, $2, "SCRUB", "FINISHED", 0; next }
+                          { print }
+                      ' "$POOLS" >"$POOLS.next"
+                      mv "$POOLS.next" "$POOLS"
+                      printf '%s\n' "$pool" >>"$STATE/scrub-launches"
+                  else
+                      exit 2
+                  fi
+                  ;;
+              *)
+                  exit 2
+                  ;;
+          esac
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - hostname
+        - zfs
+        - zpool

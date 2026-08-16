@@ -1,0 +1,10 @@
+---
+- name: Converge
+  hosts: all
+  vars:
+    pve_resource_scheduling_scrub_policies:
+      io:
+        calendar: "*-*-* 05:00:00"
+        cycle_days: 28
+  roles:
+    - role: pve_resource_scheduling
