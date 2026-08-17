@@ -415,3 +415,310 @@
       ansible.builtin.assert:
         that:
           - not pve_maintenance_remaining_lock.stat.exists
+
+    - name: Enable exact planned-singleton cluster fixture
+      ansible.builtin.file:
+        path: /run/pve-maintenance-test/planned-singleton-state
+        state: touch
+        mode: "0600"
+
+    - name: Reset APT command log before planned-singleton report
+      ansible.builtin.copy:
+        content: ""
+        dest: /run/pve-maintenance-test/apt-arguments
+        mode: "0600"
+
+    - name: Run planned-singleton report with exact live cluster state
+      ansible.builtin.include_role:
+        name: pve_maintenance
+      vars:
+        pve_maintenance_execute: false
+        pve_maintenance_pmxcfs_atomic_lock_validated: true
+        pve_maintenance_cluster_safety_mode: planned_singleton
+        pve_maintenance_planned_singleton_node: io
+        pve_maintenance_planned_singleton_peer: europa
+
+    - name: Read planned-singleton report APT command arguments
+      ansible.builtin.slurp:
+        src: /run/pve-maintenance-test/apt-arguments
+      register: pve_maintenance_planned_report_apt
+
+    - name: Verify planned-singleton report never executes APT
+      ansible.builtin.assert:
+        that:
+          - >-
+            '-o DPkg::Lock::Timeout=120 update' in
+            (pve_maintenance_planned_report_apt.content | b64decode)
+          - >-
+            '-o DPkg::Lock::Timeout=120 -s --no-remove dist-upgrade' in
+            (pve_maintenance_planned_report_apt.content | b64decode)
+          - "'-y ' not in (pve_maintenance_planned_report_apt.content | b64decode)"
+
+    - name: Reset APT command log before unacknowledged singleton execute
+      ansible.builtin.copy:
+        content: ""
+        dest: /run/pve-maintenance-test/apt-arguments
+        mode: "0600"
+
+    - name: Verify missing singleton fencing acknowledgement blocks before lock or APT
+      block:
+        - name: Attempt unacknowledged planned-singleton execute
+          ansible.builtin.include_role:
+            name: pve_maintenance
+          vars:
+            pve_maintenance_execute: true
+            pve_maintenance_pmxcfs_atomic_lock_validated: true
+            pve_maintenance_cluster_safety_mode: planned_singleton
+            pve_maintenance_planned_singleton_node: io
+            pve_maintenance_planned_singleton_peer: europa
+            pve_maintenance_planned_singleton_pmxcfs_atomic_lock_validated: true
+            pve_maintenance_planned_singleton_fencing_ack: false
+
+        - name: Fail if unacknowledged singleton execute was accepted
+          ansible.builtin.fail:
+            msg: Unacknowledged planned-singleton execute was accepted
+      rescue:
+        - name: Read APT commands after unacknowledged singleton execute
+          ansible.builtin.slurp:
+            src: /run/pve-maintenance-test/apt-arguments
+          register: pve_maintenance_unacknowledged_execute_apt
+
+        - name: Inspect lock after unacknowledged singleton execute
+          ansible.builtin.stat:
+            path: /etc/pve/priv/.pve-maintenance.lock
+          register: pve_maintenance_unacknowledged_execute_lock
+
+        - name: Confirm unacknowledged singleton execute made no lock or APT change
+          ansible.builtin.assert:
+            that:
+              - (pve_maintenance_unacknowledged_execute_apt.content | b64decode) == ''
+              - not pve_maintenance_unacknowledged_execute_lock.stat.exists
+
+    - name: Execute acknowledged planned-singleton maintenance with mocks
+      ansible.builtin.include_role:
+        name: pve_maintenance
+      vars:
+        pve_maintenance_execute: true
+        pve_maintenance_pmxcfs_atomic_lock_validated: true
+        pve_maintenance_cluster_safety_mode: planned_singleton
+        pve_maintenance_planned_singleton_node: io
+        pve_maintenance_planned_singleton_peer: europa
+        pve_maintenance_planned_singleton_pmxcfs_atomic_lock_validated: true
+        pve_maintenance_planned_singleton_fencing_ack: true
+
+    - name: Read acknowledged planned-singleton execute APT command arguments
+      ansible.builtin.slurp:
+        src: /run/pve-maintenance-test/apt-arguments
+      register: pve_maintenance_acknowledged_execute_apt
+
+    - name: Verify acknowledged planned-singleton execute ran the upgrade
+      ansible.builtin.assert:
+        that:
+          - >-
+            '-y --no-remove -o DPkg::Lock::Timeout=120' in
+            (pve_maintenance_acknowledged_execute_apt.content | b64decode)
+
+    - name: Verify planned singleton rejects an unexpected online node
+      block:
+        - name: Create unexpected online-node fixture
+          ansible.builtin.file:
+            path: /run/pve-maintenance-test/planned-singleton-wrong-online
+            state: touch
+            mode: "0600"
+
+        - name: Run planned-singleton preflight with unexpected online node
+          ansible.builtin.command:
+            argv:
+              - /usr/local/lib/pve-maintenance/pve-maintenance-check
+              - preflight
+              - --node
+              - io
+              - --cluster-name
+              - jupiter
+              - --cluster-nodes
+              - europa,io
+              - --cluster-safety-mode
+              - planned_singleton
+              - --planned-singleton-node
+              - io
+              - --planned-singleton-peer
+              - europa
+              - --root-free-mb
+              - "1024"
+              - --boot-free-mb
+              - "256"
+              - --host-backup-max-age-hours
+              - "72"
+          register: pve_maintenance_planned_wrong_online
+          changed_when: false
+          failed_when: false
+
+        - name: Confirm unexpected online node is rejected
+          ansible.builtin.assert:
+            that:
+              - pve_maintenance_planned_wrong_online.rc != 0
+      always:
+        - name: Remove unexpected online-node fixture
+          ansible.builtin.file:
+            path: /run/pve-maintenance-test/planned-singleton-wrong-online
+            state: absent
+
+    - name: Verify planned singleton rejects incorrect votes
+      block:
+        - name: Create incorrect planned-singleton votes fixture
+          ansible.builtin.file:
+            path: /run/pve-maintenance-test/planned-singleton-wrong-votes
+            state: touch
+            mode: "0600"
+
+        - name: Run planned-singleton preflight with incorrect votes
+          ansible.builtin.command:
+            argv:
+              - /usr/local/lib/pve-maintenance/pve-maintenance-check
+              - preflight
+              - --node
+              - io
+              - --cluster-name
+              - jupiter
+              - --cluster-nodes
+              - europa,io
+              - --cluster-safety-mode
+              - planned_singleton
+              - --planned-singleton-node
+              - io
+              - --planned-singleton-peer
+              - europa
+              - --root-free-mb
+              - "1024"
+              - --boot-free-mb
+              - "256"
+              - --host-backup-max-age-hours
+              - "72"
+          register: pve_maintenance_planned_wrong_votes
+          changed_when: false
+          failed_when: false
+
+        - name: Confirm incorrect planned-singleton votes are rejected
+          ansible.builtin.assert:
+            that:
+              - pve_maintenance_planned_wrong_votes.rc != 0
+      always:
+        - name: Remove incorrect planned-singleton votes fixture
+          ansible.builtin.file:
+            path: /run/pve-maintenance-test/planned-singleton-wrong-votes
+            state: absent
+
+    - name: Verify planned singleton rejects altered configured membership
+      block:
+        - name: Create altered planned-singleton membership fixture
+          ansible.builtin.file:
+            path: /run/pve-maintenance-test/planned-singleton-wrong-configured-nodes
+            state: touch
+            mode: "0600"
+
+        - name: Run planned-singleton preflight with altered membership
+          ansible.builtin.command:
+            argv:
+              - /usr/local/lib/pve-maintenance/pve-maintenance-check
+              - preflight
+              - --node
+              - io
+              - --cluster-name
+              - jupiter
+              - --cluster-nodes
+              - europa,io
+              - --cluster-safety-mode
+              - planned_singleton
+              - --planned-singleton-node
+              - io
+              - --planned-singleton-peer
+              - europa
+              - --root-free-mb
+              - "1024"
+              - --boot-free-mb
+              - "256"
+              - --host-backup-max-age-hours
+              - "72"
+          register: pve_maintenance_planned_wrong_membership
+          changed_when: false
+          failed_when: false
+
+        - name: Confirm altered planned-singleton membership is rejected
+          ansible.builtin.assert:
+            that:
+              - pve_maintenance_planned_wrong_membership.rc != 0
+      always:
+        - name: Remove altered planned-singleton membership fixture
+          ansible.builtin.file:
+            path: /run/pve-maintenance-test/planned-singleton-wrong-configured-nodes
+            state: absent
+
+    - name: Verify planned singleton rejects quorum-stack update plans
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/pve-maintenance/pve-maintenance-check
+          - simulation
+          - --cluster-safety-mode
+          - planned_singleton
+        stdin: "{{ item }}"
+      loop:
+        - Inst corosync [3.1.7-pve1]
+        - Conf corosync (3.1.7-pve1)
+        - Inst pve-cluster [8.4.0]
+        - Conf pve-cluster (8.4.0)
+        - Inst libvotequorum1 [3.1.9]
+        - Conf libvotequorum1 (3.1.9)
+        - Inst libcpg4 [3.1.9]
+        - Conf libcpg4 (3.1.9)
+        - Inst kronosnet [1.30]
+        - Conf kronosnet (1.30)
+        - Inst libcfg7 [3.1.9]
+        - Conf libcfg7 (3.1.9)
+        - Inst libcmap4 [3.1.9]
+        - Conf libcmap4 (3.1.9)
+        - Inst libcorosync-common4 [3.1.9]
+        - Conf libcorosync-common4 (3.1.9)
+        - Inst libknet1t64 [1.30]
+        - Conf libknet1t64 (1.30)
+        - Inst libnozzle1t64 [1.30]
+        - Conf libnozzle1t64 (1.30)
+        - Inst libqb100 [2.0.8]
+        - Conf libqb100 (2.0.8)
+        - Inst libquorum5 [3.1.9]
+        - Conf libquorum5 (3.1.9)
+        - Inst libsam4 [3.1.9]
+        - Conf libsam4 (3.1.9)
+        - Inst libtotem-pg5 [3.1.9]
+        - Conf libtotem-pg5 (3.1.9)
+      register: pve_maintenance_planned_quorum_simulations
+      changed_when: false
+      failed_when: false
+
+    - name: Confirm every planned singleton quorum-stack plan is rejected
+      ansible.builtin.assert:
+        that:
+          - >-
+            pve_maintenance_planned_quorum_simulations.results |
+            map(attribute='rc') | select('equalto', 0) | list | length == 0
+
+    - name: Verify strict mode still permits a quorum-stack update plan
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/pve-maintenance/pve-maintenance-check
+          - simulation
+          - --cluster-safety-mode
+          - strict_two_node
+        stdin: Inst corosync [3.1.7-pve1]
+      register: pve_maintenance_strict_quorum_simulation
+      changed_when: false
+      failed_when: false
+
+    - name: Confirm strict-mode quorum-stack plan behavior remains unchanged
+      ansible.builtin.assert:
+        that:
+          - pve_maintenance_strict_quorum_simulation.rc == 0
+
+    - name: Remove exact planned-singleton cluster fixture
+      ansible.builtin.file:
+        path: /run/pve-maintenance-test/planned-singleton-state
+        state: absent

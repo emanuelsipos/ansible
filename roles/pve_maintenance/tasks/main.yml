@@ -6,6 +6,26 @@
       - pve_maintenance_pmxcfs_atomic_lock_validated is boolean
       - pve_maintenance_cluster_name == 'jupiter'
       - pve_maintenance_cluster_nodes | sort == ['europa', 'io']
+      - >-
+        pve_maintenance_cluster_safety_mode in
+        ['strict_two_node', 'planned_singleton']
+      - pve_maintenance_planned_singleton_node is string
+      - pve_maintenance_planned_singleton_peer is string
+      - pve_maintenance_planned_singleton_pmxcfs_atomic_lock_validated is boolean
+      - pve_maintenance_planned_singleton_fencing_ack is boolean
+      - >-
+        pve_maintenance_cluster_safety_mode != 'planned_singleton' or
+        (
+          pve_maintenance_planned_singleton_node == 'io' and
+          pve_maintenance_planned_singleton_peer == 'europa' and
+          inventory_hostname == pve_maintenance_planned_singleton_node
+        )
+      - >-
+        not pve_maintenance_planned_singleton_fencing_ack or
+        (
+          pve_maintenance_execute and
+          pve_maintenance_cluster_safety_mode == 'planned_singleton'
+        )
       - pve_maintenance_lock_dir == '/etc/pve/priv/.pve-maintenance.lock'
       - pve_maintenance_apt_lock_timeout is integer
       - pve_maintenance_apt_lock_timeout | int >= 1
@@ -56,6 +76,33 @@
       Execute mode is blocked until pve_maintenance_pmxcfs_atomic_lock_validated
       is explicitly true after the documented live pmxcfs mkdir/rmdir check.
   when: pve_maintenance_execute | bool
+  tags: [pve, maintenance]
+
+- name: Require singleton pmxcfs lock validation before package execution
+  ansible.builtin.assert:
+    that:
+      - pve_maintenance_planned_singleton_pmxcfs_atomic_lock_validated | bool
+    quiet: true
+    fail_msg: >-
+      Planned-singleton execute mode is blocked until the pmxcfs atomic lock is
+      explicitly validated while the cluster is in the intended singleton state.
+  when:
+    - pve_maintenance_execute | bool
+    - pve_maintenance_cluster_safety_mode == 'planned_singleton'
+  tags: [pve, maintenance]
+
+- name: Require explicit fencing acknowledgement for singleton execution
+  ansible.builtin.assert:
+    that:
+      - pve_maintenance_planned_singleton_fencing_ack | bool
+    quiet: true
+    fail_msg: >-
+      Planned-singleton execute mode requires the typed per-run variable
+      pve_maintenance_planned_singleton_fencing_ack=true after confirming that
+      the configured peer is physically powered off and cannot rejoin.
+  when:
+    - pve_maintenance_execute | bool
+    - pve_maintenance_cluster_safety_mode == 'planned_singleton'
   tags: [pve, maintenance]
 
 - name: Run PVE maintenance
@@ -148,6 +195,12 @@
           - "{{ pve_maintenance_cluster_name }}"
           - --cluster-nodes
           - "{{ pve_maintenance_cluster_nodes | join(',') }}"
+          - --cluster-safety-mode
+          - "{{ pve_maintenance_cluster_safety_mode }}"
+          - --planned-singleton-node
+          - "{{ pve_maintenance_planned_singleton_node }}"
+          - --planned-singleton-peer
+          - "{{ pve_maintenance_planned_singleton_peer }}"
           - --root-free-mb
           - "{{ pve_maintenance_root_free_mb | string }}"
           - --boot-free-mb
@@ -215,6 +268,8 @@
         argv:
           - /usr/local/lib/pve-maintenance/pve-maintenance-check
           - simulation
+          - --cluster-safety-mode
+          - "{{ pve_maintenance_cluster_safety_mode }}"
         stdin: "{{ pve_maintenance_simulation.stdout }}"
       changed_when: false
 
@@ -229,12 +284,20 @@
           - "{{ pve_maintenance_cluster_name }}"
           - --cluster-nodes
           - "{{ pve_maintenance_cluster_nodes | join(',') }}"
+          - --cluster-safety-mode
+          - "{{ pve_maintenance_cluster_safety_mode }}"
+          - --planned-singleton-node
+          - "{{ pve_maintenance_planned_singleton_node }}"
+          - --planned-singleton-peer
+          - "{{ pve_maintenance_planned_singleton_peer }}"
           - --root-free-mb
           - "{{ pve_maintenance_root_free_mb | string }}"
           - --boot-free-mb
           - "{{ pve_maintenance_boot_free_mb | string }}"
           - --host-backup-max-age-hours
           - "{{ pve_maintenance_host_backup_max_age_hours | string }}"
+          - --fencing-ack
+          - "{{ pve_maintenance_planned_singleton_fencing_ack | bool | lower }}"
       changed_when: false
       when: pve_maintenance_execute | bool
 
@@ -289,6 +352,14 @@
           - "{{ pve_maintenance_cluster_name }}"
           - --cluster-nodes
           - "{{ pve_maintenance_cluster_nodes | join(',') }}"
+          - --cluster-safety-mode
+          - "{{ pve_maintenance_cluster_safety_mode }}"
+          - --planned-singleton-node
+          - "{{ pve_maintenance_planned_singleton_node }}"
+          - --planned-singleton-peer
+          - "{{ pve_maintenance_planned_singleton_peer }}"
+          - --fencing-ack
+          - "{{ pve_maintenance_planned_singleton_fencing_ack | bool | lower }}"
       changed_when: false
       when: pve_maintenance_execute | bool
 

@@ -6,6 +6,10 @@ set -euo pipefail
 readonly PROTECTED_PACKAGES=(
     proxmox-ve pve-manager pve-cluster corosync qemu-server pve-container
 )
+readonly QUORUM_STACK_PACKAGES=(
+    corosync kronosnet libcfg libcmap libcoro libcpg libknet libnozzle libqb
+    libquorum libsam libtotem libvotequorum pve-cluster
+)
 readonly REQUIRED_SERVICES=(
     pve-cluster.service corosync.service pvedaemon.service pveproxy.service
     pvestatd.service
@@ -52,31 +56,69 @@ check_cluster() {
     [[ "$cluster_name" == "$CLUSTER_NAME" ]] \
         || fail "cluster name is not ${CLUSTER_NAME}"
     grep -Eq '^Quorate:[[:space:]]+Yes$' <<<"$status" || fail "cluster is not quorate"
-    grep -Eq '^Nodes:[[:space:]]+2$' <<<"$status" || fail "cluster does not report two nodes"
-    grep -Eq '^Expected votes:[[:space:]]+2$' <<<"$status" \
-        || fail "cluster does not have exactly two expected votes"
-    grep -Eq '^Total votes:[[:space:]]+2$' <<<"$status" \
-        || fail "cluster does not have exactly two total votes"
     ! grep -Eqi 'qdevice' <<<"$status" || fail "QDevice is unexpectedly configured"
     grep -Eq '^[[:space:]]*two_node:[[:space:]]*1[[:space:]]*$' /etc/pve/corosync.conf \
         || fail "corosync two_node=1 is not configured"
     nodes=$(pvesh get /cluster/status --output-format json) \
         || fail "cannot read cluster node status"
-    CLUSTER_NODES="$CLUSTER_NODES" python3 -c '
+    CLUSTER_NODES="$CLUSTER_NODES" \
+        CLUSTER_SAFETY_MODE="$CLUSTER_SAFETY_MODE" \
+        PLANNED_SINGLETON_NODE="$PLANNED_SINGLETON_NODE" \
+        PLANNED_SINGLETON_PEER="$PLANNED_SINGLETON_PEER" python3 -c '
 import json
 import os
 import sys
 
 expected = sorted(os.environ["CLUSTER_NODES"].split(","))
 entries = json.load(sys.stdin)
-actual = sorted(
+node_entries = [entry for entry in entries if entry.get("type") == "node"]
+configured = sorted(entry.get("name", entry.get("node")) for entry in node_entries)
+online = sorted(
     entry.get("name", entry.get("node"))
     for entry in entries
     if entry.get("type") == "node" and entry.get("online") in (1, True, "1")
 )
-if actual != expected:
-    raise SystemExit(f"online cluster nodes are {actual!r}, expected {expected!r}")
+if configured != expected:
+    raise SystemExit(f"configured cluster nodes are {configured!r}, expected {expected!r}")
+
+mode = os.environ["CLUSTER_SAFETY_MODE"]
+if mode == "strict_two_node":
+    expected_online = expected
+elif mode == "planned_singleton":
+    singleton = os.environ["PLANNED_SINGLETON_NODE"]
+    peer = os.environ["PLANNED_SINGLETON_PEER"]
+    if sorted([singleton, peer]) != expected or singleton == peer:
+        raise SystemExit("planned singleton nodes do not match configured membership")
+    expected_online = [singleton]
+else:
+    raise SystemExit(f"unsupported cluster safety mode: {mode}")
+
+if online != expected_online:
+    raise SystemExit(f"online cluster nodes are {online!r}, expected {expected_online!r}")
 ' <<<"$nodes"
+
+    case "$CLUSTER_SAFETY_MODE" in
+        strict_two_node)
+            grep -Eq '^Nodes:[[:space:]]+2$' <<<"$status" \
+                || fail "cluster does not report two nodes"
+            grep -Eq '^Expected votes:[[:space:]]+2$' <<<"$status" \
+                || fail "cluster does not have exactly two expected votes"
+            grep -Eq '^Total votes:[[:space:]]+2$' <<<"$status" \
+                || fail "cluster does not have exactly two total votes"
+            ;;
+        planned_singleton)
+            [[ "$NODE" == "$PLANNED_SINGLETON_NODE" ]] \
+                || fail "planned-singleton maintenance targets the wrong node"
+            grep -Eq '^Nodes:[[:space:]]+1$' <<<"$status" \
+                || fail "planned singleton does not report exactly one node"
+            grep -Eq '^Expected votes:[[:space:]]+1$' <<<"$status" \
+                || fail "planned singleton does not have exactly one expected vote"
+            grep -Eq '^Total votes:[[:space:]]+1$' <<<"$status" \
+                || fail "planned singleton does not have exactly one total vote"
+            log "WARNING: planned-singleton cluster safety mode is active; ${PLANNED_SINGLETON_PEER} must remain physically fenced"
+            ;;
+        *) fail "unsupported cluster safety mode: $CLUSTER_SAFETY_MODE" ;;
+    esac
 }
 
 check_no_active_cluster_tasks() {
@@ -264,10 +306,21 @@ check_failed_units_unchanged() {
 }
 
 simulation() {
-    local line
+    local action line package quorum_package
     while IFS= read -r line; do
-        [[ "$line" =~ ^Remv[[:space:]]+([^[:space:]]+) ]] || continue
-        fail "simulation removes a package: $line"
+        if [[ "$line" =~ ^Remv[[:space:]]+([^[:space:]]+) ]]; then
+            fail "simulation removes a package: $line"
+        fi
+        if [[ "$CLUSTER_SAFETY_MODE" == planned_singleton &&
+            "$line" =~ ^(Inst|Conf)[[:space:]]+([^[:space:]]+) ]]; then
+            action=${BASH_REMATCH[1]}
+            package=${BASH_REMATCH[2]%%:*}
+            for quorum_package in "${QUORUM_STACK_PACKAGES[@]}"; do
+                if [[ "$package" == "$quorum_package"* ]]; then
+                    fail "planned singleton blocks quorum-stack package ${action,,}: $package"
+                fi
+            done
+        fi
     done
     log "simulation does not remove packages"
 }
@@ -294,6 +347,10 @@ shift || true
 NODE=""
 CLUSTER_NAME=""
 CLUSTER_NODES=""
+CLUSTER_SAFETY_MODE=strict_two_node
+PLANNED_SINGLETON_NODE=""
+PLANNED_SINGLETON_PEER=""
+FENCING_ACK=false
 ROOT_FREE_MB=""
 BOOT_FREE_MB=""
 HOST_BACKUP_MAX_AGE_HOURS=""
@@ -302,6 +359,10 @@ while (($#)); do
         --node) NODE=$2; shift 2 ;;
         --cluster-name) CLUSTER_NAME=$2; shift 2 ;;
         --cluster-nodes) CLUSTER_NODES=$2; shift 2 ;;
+        --cluster-safety-mode) CLUSTER_SAFETY_MODE=$2; shift 2 ;;
+        --planned-singleton-node) PLANNED_SINGLETON_NODE=$2; shift 2 ;;
+        --planned-singleton-peer) PLANNED_SINGLETON_PEER=$2; shift 2 ;;
+        --fencing-ack) FENCING_ACK=$2; shift 2 ;;
         --root-free-mb) ROOT_FREE_MB=$2; shift 2 ;;
         --boot-free-mb) BOOT_FREE_MB=$2; shift 2 ;;
         --host-backup-max-age-hours) HOST_BACKUP_MAX_AGE_HOURS=$2; shift 2 ;;
@@ -315,11 +376,17 @@ case "$MODE" in
         log "pmxcfs mount check passed"
         ;;
     simulation)
+        [[ "$CLUSTER_SAFETY_MODE" == strict_two_node || \
+            "$CLUSTER_SAFETY_MODE" == planned_singleton ]] \
+            || fail "invalid cluster safety mode"
         simulation
         ;;
     preflight)
         [[ "$NODE" == europa || "$NODE" == io ]] || fail "unsupported PVE node: $NODE"
         [[ "$CLUSTER_NODES" == 'europa,io' ]] || fail "unexpected cluster node set"
+        [[ "$CLUSTER_SAFETY_MODE" == strict_two_node || \
+            "$CLUSTER_SAFETY_MODE" == planned_singleton ]] \
+            || fail "invalid cluster safety mode"
         [[ "$HOST_BACKUP_MAX_AGE_HOURS" =~ ^[0-9]+$ ]] \
             || fail "invalid host-backup maximum age"
         check_node_identity
@@ -334,6 +401,11 @@ case "$MODE" in
     execute-preflight)
         [[ "$NODE" == europa || "$NODE" == io ]] || fail "unsupported PVE node: $NODE"
         [[ "$CLUSTER_NODES" == 'europa,io' ]] || fail "unexpected cluster node set"
+        [[ "$CLUSTER_SAFETY_MODE" == strict_two_node || \
+            "$CLUSTER_SAFETY_MODE" == planned_singleton ]] \
+            || fail "invalid cluster safety mode"
+        [[ "$CLUSTER_SAFETY_MODE" != planned_singleton || "$FENCING_ACK" == true ]] \
+            || fail "planned-singleton execution lacks fencing acknowledgement"
         [[ "$HOST_BACKUP_MAX_AGE_HOURS" =~ ^[0-9]+$ ]] \
             || fail "invalid host-backup maximum age"
         check_node_identity
@@ -343,6 +415,11 @@ case "$MODE" in
     postflight)
         [[ "$NODE" == europa || "$NODE" == io ]] || fail "unsupported PVE node: $NODE"
         [[ "$CLUSTER_NODES" == 'europa,io' ]] || fail "unexpected cluster node set"
+        [[ "$CLUSTER_SAFETY_MODE" == strict_two_node || \
+            "$CLUSTER_SAFETY_MODE" == planned_singleton ]] \
+            || fail "invalid cluster safety mode"
+        [[ "$CLUSTER_SAFETY_MODE" != planned_singleton || "$FENCING_ACK" == true ]] \
+            || fail "planned-singleton postflight lacks fencing acknowledgement"
         check_node_identity
         check_pmxcfs
         require_empty_output "dpkg audit is not clean" dpkg --audit

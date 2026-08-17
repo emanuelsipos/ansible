@@ -123,6 +123,16 @@ pve_maintenance_cluster_name: jupiter
 pve_maintenance_cluster_nodes:
   - europa
   - io
+# europa is physically powered off pending fan repair. Keep static cluster
+# membership unchanged; io maintenance requires the exact quorate singleton
+# state, and execute mode additionally requires a per-run fencing acknowledgement.
+pve_maintenance_cluster_safety_mode: planned_singleton
+pve_maintenance_planned_singleton_node: io
+pve_maintenance_planned_singleton_peer: europa
+# Validated on 2026-08-17 with static europa/io membership and exact io-only
+# quorum: first mkdir succeeded, second mkdir failed, and empty rmdir succeeded.
+pve_maintenance_planned_singleton_pmxcfs_atomic_lock_validated: true
+pve_maintenance_planned_singleton_fencing_ack: false
 
 # The peer-aware local reboot timer is intentionally disabled until the first
 # controlled updates and observed reboots have been validated.

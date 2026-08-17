@@ -76,7 +76,14 @@ permits an immediate cleanup during the play when local pruning is enabled. See
 The unattended-upgrades role is explicitly excluded from PVE inventory hosts.
 PVE index refresh remains enabled without automatic package downloads or APT
 autoclean, and the base APT install-mode timer is disabled. Use only the
-controlled maintenance playbook for routine PVE updates.
+controlled maintenance playbook for routine PVE updates. The current temporary
+planned-singleton exception is limited to `io` while `europa` is physically
+fenced; its report template needs no extra variables, and its unscheduled
+execute template requires typed execution and fencing-acknowledgement variables.
+The role never automates the transient manual `pvecm expected 1` quorum change,
+rejects planned quorum-stack update plans, and requires inventory to return to
+`strict_two_node` before `europa` rejoins. See the
+[PVE maintenance runbook](playbooks/pve-maintenance/README.md).
 The market survey found no mature third-party role that replaces this PVE-
 specific safety policy, so the custom roles use official Ansible and PVE
 building blocks without additional dependencies. See the [Proxmox package

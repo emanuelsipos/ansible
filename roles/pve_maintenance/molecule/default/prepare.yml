@@ -48,13 +48,31 @@
               pvecm)
                   if [[ -e /run/pve-maintenance-test/no-quorum ]]; then
                       printf '%s\n' 'Name: jupiter' 'Nodes: 2' 'Expected votes: 2' 'Total votes: 2' 'Quorate: No'
+                  elif [[ -e /run/pve-maintenance-test/planned-singleton-state ]]; then
+                      if [[ -e /run/pve-maintenance-test/planned-singleton-wrong-votes ]]; then
+                          printf '%s\n' 'Name: jupiter' 'Nodes: 1' 'Expected votes: 2' 'Total votes: 2' 'Quorate: Yes'
+                      else
+                          printf '%s\n' 'Name: jupiter' 'Nodes: 1' 'Expected votes: 1' 'Total votes: 1' 'Quorate: Yes'
+                      fi
                   else
                       printf '%s\n' 'Name: jupiter' 'Nodes: 2' 'Expected votes: 2' 'Total votes: 2' 'Quorate: Yes'
                   fi
                   ;;
               pvesh)
                   if [[ "$*" == *'/cluster/status'* ]]; then
-                      if [[ -e /run/pve-maintenance-test/missing-peer ]]; then
+                      if [[ -e /run/pve-maintenance-test/planned-singleton-state ]]; then
+                          if [[ -e /run/pve-maintenance-test/planned-singleton-wrong-configured-nodes ]]; then
+                              printf '%s\n' '[{"type":"node","name":"io","online":1}]'
+                          elif [[ -e /run/pve-maintenance-test/planned-singleton-wrong-online ]]; then
+                              printf '%s\n' \
+                                  '[{"type":"node","name":"io","online":1},' \
+                                  '{"type":"node","name":"europa","online":1}]'
+                          else
+                              printf '%s\n' \
+                                  '[{"type":"node","name":"io","online":1},' \
+                                  '{"type":"node","name":"europa","online":0}]'
+                          fi
+                      elif [[ -e /run/pve-maintenance-test/missing-peer ]]; then
                           printf '%s\n' '[{"type":"node","name":"io","online":1}]'
                       else
                           printf '%s\n' \

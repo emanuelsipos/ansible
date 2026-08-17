@@ -7,6 +7,13 @@ pve_maintenance_cluster_name: jupiter
 pve_maintenance_cluster_nodes:
   - europa
   - io
+pve_maintenance_cluster_safety_mode: strict_two_node
+pve_maintenance_planned_singleton_node: ""
+pve_maintenance_planned_singleton_peer: ""
+pve_maintenance_planned_singleton_pmxcfs_atomic_lock_validated: false
+# Supply true only as a typed per-run extra variable after physically fencing
+# the offline peer. It is never stored as enabled in inventory.
+pve_maintenance_planned_singleton_fencing_ack: false
 pve_maintenance_lock_dir: /etc/pve/priv/.pve-maintenance.lock
 pve_maintenance_apt_lock_timeout: 120
 pve_maintenance_apt_timeout: 3600
