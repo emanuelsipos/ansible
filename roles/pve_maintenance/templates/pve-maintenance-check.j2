@@ -139,10 +139,12 @@ if tasks:
 }
 
 check_replication() {
-    local replication
+    local replication configuration
     replication=$(pvesh get "/nodes/${NODE}/replication" --output-format json) \
         || fail "cannot read replication status"
-    python3 -c '
+
+    if [[ "$CLUSTER_SAFETY_MODE" != planned_singleton ]]; then
+        python3 -c '
 import json
 import sys
 
@@ -158,6 +160,142 @@ for entry in json.load(sys.stdin):
         if value is not None and str(value).strip().lower() in {"error", "running"}:
             raise SystemExit(f"unsafe replication state: {entry!r}")
 ' <<<"$replication"
+        return
+    fi
+
+    configuration=$(pvesh get /cluster/replication --output-format json) \
+        || fail "cannot read replication configuration"
+    NODE="$NODE" \
+        PLANNED_SINGLETON_PEER="$PLANNED_SINGLETON_PEER" python3 -c '
+import json
+import os
+import sys
+
+
+def fail(message):
+    raise SystemExit(message)
+
+
+def job_id(entry, description):
+    value = entry.get("id")
+    if type(value) is not str or not value or value != value.strip():
+        fail(f"{description} has an invalid or missing replication job ID: {entry!r}")
+    return value
+
+
+def endpoint(entry, field, description):
+    value = entry.get(field)
+    if type(value) is not str or not value or value != value.strip():
+        fail(f"{description} has an invalid replication {field}: {entry!r}")
+    return value
+
+
+def disabled(entry):
+    if "disable" not in entry:
+        return False
+    value = entry["disable"]
+    if type(value) is bool:
+        return value
+    if type(value) is int:
+        if value in {0, 1}:
+            return value == 1
+    elif type(value) is str:
+        if value in {"0", "1"}:
+            return value == "1"
+    fail(f"replication configuration has an invalid disable value: {entry!r}")
+
+
+try:
+    statuses = json.load(sys.stdin)
+    configurations = json.loads(sys.argv[1])
+except (json.JSONDecodeError, TypeError) as error:
+    fail(f"cannot parse replication status or configuration: {error}")
+
+if type(statuses) is not list:
+    fail(f"replication status is not a JSON list: {statuses!r}")
+if type(configurations) is not list:
+    fail(f"replication configuration is not a JSON list: {configurations!r}")
+
+configurations_by_id = {}
+local_configuration_ids = set()
+for configuration in configurations:
+    if type(configuration) is not dict:
+        fail(f"replication configuration entry is not an object: {configuration!r}")
+    configuration_id = job_id(configuration, "replication configuration")
+    if configuration_id in configurations_by_id:
+        fail(f"duplicate replication configuration job ID: {configuration_id}")
+    source = endpoint(configuration, "source", "replication configuration")
+    endpoint(configuration, "target", "replication configuration")
+    disabled(configuration)
+    configurations_by_id[configuration_id] = configuration
+    if source == os.environ["NODE"]:
+        local_configuration_ids.add(configuration_id)
+
+node = os.environ["NODE"]
+peer = os.environ["PLANNED_SINGLETON_PEER"]
+for configuration in configurations_by_id.values():
+    if configuration["target"] != peer:
+        continue
+    if configuration["source"] != node:
+        fail(f"replication targeting planned singleton peer has an unexpected source: {configuration!r}")
+    if not disabled(configuration):
+        fail(f"enabled replication targets planned singleton peer and can retry: {configuration!r}")
+
+status_ids = set()
+for status in statuses:
+    if type(status) is not dict:
+        fail(f"replication status entry is not an object: {status!r}")
+    status_id = job_id(status, "replication status")
+    if status_id in status_ids:
+        fail(f"duplicate replication status job ID: {status_id}")
+    status_ids.add(status_id)
+    configuration = configurations_by_id.get(status_id)
+    if configuration is None:
+        fail(f"replication status has no configuration: {status!r}")
+    if configuration["source"] != node:
+        fail(f"local replication status has an unexpected configuration source: {status!r}")
+
+    raw_fail_count = status.get("fail_count", 0)
+    if type(raw_fail_count) is int:
+        failed = raw_fail_count
+    elif type(raw_fail_count) is str:
+        try:
+            failed = int(raw_fail_count)
+        except ValueError:
+            fail(f"invalid replication fail_count: {status!r}")
+    else:
+        fail(f"invalid replication fail_count: {status!r}")
+    if failed < 0:
+        fail(f"invalid replication fail_count: {status!r}")
+
+    values = []
+    for field in ("state", "status"):
+        value = status.get(field)
+        if value is None:
+            continue
+        if type(value) is not str:
+            fail(f"invalid replication {field}: {status!r}")
+        values.append(value.strip().lower())
+    if "running" in values:
+        fail(f"replication is running: {status!r}")
+
+    error = status.get("error")
+    if error is not None and type(error) is not str:
+        fail(f"invalid replication error: {status!r}")
+    has_error = error is not None and bool(error.strip())
+
+    if failed == 0 and "error" not in values and not has_error:
+        continue
+    if configuration["target"] != peer:
+        fail(f"replication failure does not match the planned singleton path: {status!r}")
+    if not disabled(configuration):
+        fail(f"replication failure is not explicitly disabled: {status!r}")
+
+missing_status_ids = local_configuration_ids - status_ids
+if missing_status_ids:
+    fail(f"local replication configuration has no status: {sorted(missing_status_ids)!r}")
+' "$configuration" <<<"$replication" \
+        || fail "replication status or configuration is unsafe"
 }
 
 check_apt_activity() {

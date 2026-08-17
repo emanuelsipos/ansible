@@ -21,6 +21,14 @@ removal blocks execution. In planned-singleton mode, simulated installs or
 configuration of `corosync`, `pve-cluster`, or other quorum-stack packages also
 block execution.
 
+Before a planned-singleton report or execute run, operationally disable each
+affected `io` to `europa` replication job. Do not clear replication history or
+remove jobs. A historical failed or error status is permitted only when its
+unique cluster replication configuration explicitly disables that exact `io` to
+`europa` job; running status always blocks. Enabled jobs targeting `europa`
+also block while healthy because they can retry. Every `io`-source replication
+configuration must have one local status entry.
+
 For this temporary state only, an operator—not this role—may run the transient
 manual `pvecm expected 1` command on `io` after confirming `europa` is
 physically powered off and cannot rejoin. The static cluster membership remains
@@ -30,7 +38,8 @@ and strict two-node. Change `pve_maintenance_cluster_safety_mode` back to
 Then remove the physical fence only through the manual cluster recovery
 procedure, verify both nodes are online in `/cluster/status`, and complete a
 strict report showing `Nodes: 2`, `Expected votes: 2`, `Total votes: 2`, and
-`Quorate: Yes` before treating the planned exception as ended.
+`Quorate: Yes` before treating the planned exception as ended. Then re-enable
+replication using the configuration digest and validate a successful sync.
 
 After strict two-node mode is restored, run the first controlled update on
 europa, then io. After the first validated manual runs, the recommended execute

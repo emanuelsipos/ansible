@@ -61,6 +61,15 @@ The singleton pmxcfs check was observed on `io` on 2026-08-17 with exact
 `mkdir`, second-`mkdir` failure, and empty `rmdir` sequence above and verified
 that the singleton quorum state remained unchanged before and after.
 
+Before a planned-singleton report or execute run, operationally disable every
+affected replication job from `io` to `europa`. Do not clear its replication
+history or remove the job. The safety check permits a historical failed or
+error status only for a uniquely matched `/cluster/replication` job whose source
+is `io`, target is `europa`, and `disable` is explicitly true (`true`, `1`, or
+`"1"`); a running status always blocks. An enabled job targeting `europa`
+blocks even when its current status is healthy because it can retry. Every
+`io`-source replication configuration must have one local status entry.
+
 In this mode, a simulated install or configuration of `corosync`, `pve-cluster`,
 or another quorum-stack package is rejected before execution. The exception is
 only for `pve_maintenance`; peer reboot remains disabled and subject to the
@@ -69,4 +78,5 @@ normal strict two-node safety expectations. Change inventory back to
 Only then remove the physical fence under the manual cluster recovery procedure.
 Verify `/cluster/status` reports both nodes online and run a strict report that
 proves `Nodes: 2`, `Expected votes: 2`, `Total votes: 2`, and `Quorate: Yes`
-before scheduling or executing normal two-node maintenance.
+before scheduling or executing normal two-node maintenance. Then re-enable
+replication using the configuration digest and validate a successful sync.

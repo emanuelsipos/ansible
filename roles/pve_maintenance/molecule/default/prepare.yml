@@ -59,6 +59,42 @@
                   fi
                   ;;
               pvesh)
+                  replication_fixture=${PVE_MAINTENANCE_REPLICATION_FIXTURE:-}
+                  if [[ -z "$replication_fixture" ]]; then
+                      for fixture in \
+                          replication-disabled-failed \
+                          replication-disable-true \
+                          replication-disable-one \
+                          replication-disable-string-one \
+                          replication-disable-missing \
+                          replication-disable-false \
+                          replication-disable-zero \
+                          replication-disable-string-zero \
+                          replication-enabled-failed \
+                          replication-enabled-peer-healthy \
+                          replication-wrong-target \
+                          replication-wrong-source \
+                          replication-missing-config \
+                          replication-duplicate-config \
+                          replication-malformed-config \
+                          replication-config-error \
+                          replication-unmatched-status \
+                          replication-duplicate-status \
+                           replication-missing-local-status \
+                           replication-remote-no-status \
+                           replication-remote-status \
+                           replication-malformed-status-list \
+                          replication-malformed-status-entry \
+                          replication-status-api-error \
+                          replication-failed-non-peer \
+                          replication-error \
+                          replication-running; do
+                          if [[ -e "/run/pve-maintenance-test/$fixture" ]]; then
+                              replication_fixture=$fixture
+                              break
+                          fi
+                      done
+                  fi
                   if [[ "$*" == *'/cluster/status'* ]]; then
                       if [[ -e /run/pve-maintenance-test/planned-singleton-state ]]; then
                           if [[ -e /run/pve-maintenance-test/planned-singleton-wrong-configured-nodes ]]; then
@@ -85,15 +121,110 @@
                       else
                           printf '%s\n' '[{"type":"vncproxy","status":"running","endtime":1}]'
                       fi
+                  elif [[ "$*" == *'/cluster/replication'* ]]; then
+                      case "$replication_fixture" in
+                          replication-config-error) exit 3 ;;
+                          replication-missing-config)
+                              printf '%s\n' '[{"source":"io","target":"europa","disable":1}]'
+                              ;;
+                          replication-duplicate-config)
+                              printf '%s\n' \
+                                  '[{"id":"163-0","source":"io","target":"europa","disable":1},' \
+                                  '{"id":"163-0","source":"io","target":"europa","disable":1}]'
+                              ;;
+                          replication-malformed-config) printf '%s\n' '[null]' ;;
+                          replication-wrong-target)
+                              printf '%s\n' '[{"id":"163-0","source":"io","target":"saturn","disable":1}]'
+                              ;;
+                          replication-wrong-source)
+                              printf '%s\n' '[{"id":"163-0","source":"europa","target":"europa","disable":1}]'
+                              ;;
+                          replication-enabled-failed|replication-enabled-peer-healthy)
+                              printf '%s\n' '[{"id":"163-0","source":"io","target":"europa","disable":false}]'
+                              ;;
+                          replication-disabled-failed|replication-disable-one|replication-error|replication-running)
+                              printf '%s\n' '[{"id":"163-0","source":"io","target":"europa","disable":1}]'
+                              ;;
+                          replication-disable-true)
+                              printf '%s\n' '[{"id":"163-0","source":"io","target":"europa","disable":true}]'
+                              ;;
+                          replication-disable-string-one)
+                              printf '%s\n' '[{"id":"163-0","source":"io","target":"europa","disable":"1"}]'
+                              ;;
+                          replication-disable-missing)
+                              printf '%s\n' '[{"id":"163-0","source":"io","target":"europa"}]'
+                              ;;
+                          replication-disable-false)
+                              printf '%s\n' '[{"id":"163-0","source":"io","target":"europa","disable":false}]'
+                              ;;
+                          replication-disable-zero)
+                              printf '%s\n' '[{"id":"163-0","source":"io","target":"europa","disable":0}]'
+                              ;;
+                          replication-disable-string-zero)
+                              printf '%s\n' '[{"id":"163-0","source":"io","target":"europa","disable":"0"}]'
+                              ;;
+                          replication-missing-local-status)
+                              printf '%s\n' '[{"id":"163-0","source":"io","target":"europa","disable":1}]'
+                              ;;
+                           replication-remote-no-status|replication-remote-status)
+                               printf '%s\n' '[{"id":"200-0","source":"europa","target":"saturn","disable":false}]'
+                              ;;
+                          replication-unmatched-status)
+                              printf '%s\n' '[{"id":"200-0","source":"europa","target":"saturn","disable":false}]'
+                              ;;
+                          replication-duplicate-status|replication-malformed-status-list|replication-malformed-status-entry|replication-status-api-error)
+                              printf '%s\n' '[{"id":"163-0","source":"io","target":"europa","disable":1}]'
+                              ;;
+                          replication-failed-non-peer)
+                              printf '%s\n' '[{"id":"163-0","source":"io","target":"saturn","disable":1}]'
+                              ;;
+                          *)
+                              printf '%s\n' '[{"id":"200-0","source":"io","target":"saturn","disable":false}]'
+                              ;;
+                      esac
                   elif [[ "$*" == *'/replication'* ]]; then
-                      if [[ -e /run/pve-maintenance-test/replication-error ]]; then
-                          printf '%s\n' '[{"fail_count":1,"last_sync":1,"last_try":1,"next_sync":2}]'
-                      elif [[ -e /run/pve-maintenance-test/replication-running ]]; then
-                          printf '%s\n' '[{"fail_count":0,"status":"running"}]'
-                      else
-                          printf '%s\n' \
-                              '[{"fail_count":0,"last_sync":1,"last_try":1,"next_sync":2}]'
-                      fi
+                      case "$replication_fixture" in
+                          replication-disabled-failed|replication-disable-true|\
+                          replication-disable-one|replication-disable-string-one|\
+                          replication-disable-missing|\
+                          replication-disable-false|replication-disable-zero|\
+                          replication-disable-string-zero|replication-enabled-failed|\
+                          replication-wrong-target|replication-wrong-source|\
+                          replication-missing-config|replication-duplicate-config|\
+                          replication-malformed-config|replication-config-error|\
+                          replication-error|replication-failed-non-peer)
+                               printf '%s\n' \
+                                   '[{"id":"163-0","fail_count":1,"status":"error",' \
+                                   '"error":"target is unavailable",' \
+                                   '"last_sync":1,"last_try":1,"next_sync":2}]'
+                              ;;
+                          replication-unmatched-status)
+                              printf '%s\n' '[{"id":"163-0","fail_count":0}]'
+                              ;;
+                          replication-duplicate-status)
+                              printf '%s\n' \
+                                  '[{"id":"163-0","fail_count":0},' \
+                                  '{"id":"163-0","fail_count":0}]'
+                              ;;
+                           replication-missing-local-status) printf '%s\n' '[]' ;;
+                           replication-remote-no-status) printf '%s\n' '[]' ;;
+                           replication-remote-status)
+                               printf '%s\n' '[{"id":"200-0","fail_count":0}]'
+                               ;;
+                          replication-malformed-status-list) printf '%s\n' '{}' ;;
+                          replication-malformed-status-entry) printf '%s\n' '[null]' ;;
+                          replication-status-api-error) exit 3 ;;
+                          replication-enabled-peer-healthy)
+                              printf '%s\n' '[{"id":"163-0","fail_count":0,"last_sync":1,"last_try":1,"next_sync":2}]'
+                              ;;
+                          replication-running|replication-running-legacy)
+                              printf '%s\n' '[{"id":"163-0","fail_count":0,"status":"running"}]'
+                              ;;
+                          *)
+                              printf '%s\n' \
+                                  '[{"id":"200-0","fail_count":0,"last_sync":1,"last_try":1,"next_sync":2}]'
+                              ;;
+                      esac
                   else
                       exit 2
                   fi

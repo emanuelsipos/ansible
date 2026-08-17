@@ -416,6 +416,34 @@
         that:
           - not pve_maintenance_remaining_lock.stat.exists
 
+    - name: Verify strict mode rejects disabled historical replication failure
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/pve-maintenance/pve-maintenance-check
+          - preflight
+          - --node
+          - io
+          - --cluster-name
+          - jupiter
+          - --cluster-nodes
+          - europa,io
+          - --root-free-mb
+          - "1024"
+          - --boot-free-mb
+          - "256"
+          - --host-backup-max-age-hours
+          - "72"
+      environment:
+        PVE_MAINTENANCE_REPLICATION_FIXTURE: replication-disabled-failed
+      register: pve_maintenance_strict_disabled_historical_replication
+      changed_when: false
+      failed_when: false
+
+    - name: Confirm strict mode replication behavior remains unchanged
+      ansible.builtin.assert:
+        that:
+          - pve_maintenance_strict_disabled_historical_replication.rc != 0
+
     - name: Enable exact planned-singleton cluster fixture
       ansible.builtin.file:
         path: /run/pve-maintenance-test/planned-singleton-state
@@ -428,7 +456,237 @@
         dest: /run/pve-maintenance-test/apt-arguments
         mode: "0600"
 
-    - name: Run planned-singleton report with exact live cluster state
+    - name: Run planned-singleton preflight with disabled replication representations
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/pve-maintenance/pve-maintenance-check
+          - preflight
+          - --node
+          - io
+          - --cluster-name
+          - jupiter
+          - --cluster-nodes
+          - europa,io
+          - --cluster-safety-mode
+          - planned_singleton
+          - --planned-singleton-node
+          - io
+          - --planned-singleton-peer
+          - europa
+          - --root-free-mb
+          - "1024"
+          - --boot-free-mb
+          - "256"
+          - --host-backup-max-age-hours
+          - "72"
+      environment:
+        PVE_MAINTENANCE_REPLICATION_FIXTURE: "{{ item }}"
+      loop:
+        - replication-disable-true
+        - replication-disable-one
+        - replication-disable-string-one
+      register: pve_maintenance_disabled_representation
+      changed_when: false
+      failed_when: false
+
+    - name: Confirm disabled replication representations are accepted
+      ansible.builtin.assert:
+        that:
+          - >-
+            pve_maintenance_disabled_representation.results |
+            map(attribute='rc') | select('equalto', 0) | list | length == 3
+
+    - name: Verify remote replication configuration does not require local status
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/pve-maintenance/pve-maintenance-check
+          - preflight
+          - --node
+          - io
+          - --cluster-name
+          - jupiter
+          - --cluster-nodes
+          - europa,io
+          - --cluster-safety-mode
+          - planned_singleton
+          - --planned-singleton-node
+          - io
+          - --planned-singleton-peer
+          - europa
+          - --root-free-mb
+          - "1024"
+          - --boot-free-mb
+          - "256"
+          - --host-backup-max-age-hours
+          - "72"
+      environment:
+        PVE_MAINTENANCE_REPLICATION_FIXTURE: replication-remote-no-status
+      register: pve_maintenance_remote_replication_without_status
+      changed_when: false
+      failed_when: false
+
+    - name: Confirm remote replication configuration is accepted without local status
+      ansible.builtin.assert:
+        that:
+          - pve_maintenance_remote_replication_without_status.rc == 0
+
+    - name: Run planned-singleton preflight with enabled disable representations
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/pve-maintenance/pve-maintenance-check
+          - preflight
+          - --node
+          - io
+          - --cluster-name
+          - jupiter
+          - --cluster-nodes
+          - europa,io
+          - --cluster-safety-mode
+          - planned_singleton
+          - --planned-singleton-node
+          - io
+          - --planned-singleton-peer
+          - europa
+          - --root-free-mb
+          - "1024"
+          - --boot-free-mb
+          - "256"
+          - --host-backup-max-age-hours
+          - "72"
+      environment:
+        PVE_MAINTENANCE_REPLICATION_FIXTURE: "{{ item }}"
+      loop:
+        - replication-disable-missing
+        - replication-disable-false
+        - replication-disable-zero
+        - replication-disable-string-zero
+      register: pve_maintenance_enabled_representation
+      changed_when: false
+      failed_when: false
+
+    - name: Confirm enabled disable representations are rejected as enabled
+      ansible.builtin.assert:
+        that:
+          - item.rc != 0
+          - item.stderr is search('enabled replication targets planned singleton peer')
+      loop: "{{ pve_maintenance_enabled_representation.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Run planned-singleton preflight with unsafe replication fixtures
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/pve-maintenance/pve-maintenance-check
+          - preflight
+          - --node
+          - io
+          - --cluster-name
+          - jupiter
+          - --cluster-nodes
+          - europa,io
+          - --cluster-safety-mode
+          - planned_singleton
+          - --planned-singleton-node
+          - io
+          - --planned-singleton-peer
+          - europa
+          - --root-free-mb
+          - "1024"
+          - --boot-free-mb
+          - "256"
+          - --host-backup-max-age-hours
+          - "72"
+      environment:
+        PVE_MAINTENANCE_REPLICATION_FIXTURE: "{{ item }}"
+      loop:
+        - replication-enabled-failed
+        - replication-enabled-peer-healthy
+        - replication-wrong-target
+        - replication-wrong-source
+        - replication-missing-config
+        - replication-duplicate-config
+        - replication-malformed-config
+        - replication-config-error
+        - replication-unmatched-status
+        - replication-duplicate-status
+        - replication-missing-local-status
+        - replication-remote-status
+        - replication-malformed-status-list
+        - replication-malformed-status-entry
+        - replication-status-api-error
+        - replication-failed-non-peer
+        - replication-running
+      register: pve_maintenance_unsafe_replication
+      changed_when: false
+      failed_when: false
+
+    - name: Confirm unsafe planned-singleton replication fixtures are rejected
+      ansible.builtin.assert:
+        that:
+          - >-
+            pve_maintenance_unsafe_replication.results |
+            map(attribute='rc') | select('equalto', 0) | list | length == 0
+
+    - name: Verify enabled healthy peer replication blocks the role before APT
+      block:
+        - name: Create enabled healthy peer replication fixture
+          ansible.builtin.file:
+            path: /run/pve-maintenance-test/replication-enabled-peer-healthy
+            state: touch
+            mode: "0600"
+
+        - name: Attempt planned-singleton report with enabled healthy peer replication
+          ansible.builtin.include_role:
+            name: pve_maintenance
+          vars:
+            pve_maintenance_execute: false
+            pve_maintenance_pmxcfs_atomic_lock_validated: true
+            pve_maintenance_cluster_safety_mode: planned_singleton
+            pve_maintenance_planned_singleton_node: io
+            pve_maintenance_planned_singleton_peer: europa
+
+        - name: Record unexpected enabled healthy peer replication acceptance
+          ansible.builtin.set_fact:
+            pve_maintenance_enabled_peer_replication_accepted: true
+      rescue:
+        - name: Read APT commands after enabled healthy peer replication refusal
+          ansible.builtin.slurp:
+            src: /run/pve-maintenance-test/apt-arguments
+          register: pve_maintenance_enabled_peer_replication_apt
+
+        - name: Inspect lock after enabled healthy peer replication refusal
+          ansible.builtin.stat:
+            path: /etc/pve/priv/.pve-maintenance.lock
+          register: pve_maintenance_enabled_peer_replication_lock
+    - name: Confirm enabled healthy peer replication made no APT or lock change
+      block:
+        - name: Assert enabled healthy peer replication was refused before APT
+          ansible.builtin.assert:
+            that:
+              - pve_maintenance_enabled_peer_replication_accepted is not defined
+              - >-
+                (pve_maintenance_enabled_peer_replication_apt.content | b64decode)
+                == ''
+              - not pve_maintenance_enabled_peer_replication_lock.stat.exists
+      always:
+        - name: Remove enabled healthy peer replication fixture
+          ansible.builtin.file:
+            path: /run/pve-maintenance-test/replication-enabled-peer-healthy
+            state: absent
+
+    - name: Create disabled historical peer replication fixture
+      ansible.builtin.file:
+        path: /run/pve-maintenance-test/replication-disabled-failed
+        state: touch
+        mode: "0600"
+
+    - name: Reset APT command log before disabled historical peer replication report
+      ansible.builtin.copy:
+        content: ""
+        dest: /run/pve-maintenance-test/apt-arguments
+        mode: "0600"
+
+    - name: Run planned-singleton report with disabled historical peer replication failure
       ansible.builtin.include_role:
         name: pve_maintenance
       vars:
@@ -438,21 +696,34 @@
         pve_maintenance_planned_singleton_node: io
         pve_maintenance_planned_singleton_peer: europa
 
-    - name: Read planned-singleton report APT command arguments
+    - name: Read disabled historical peer replication report APT command arguments
       ansible.builtin.slurp:
         src: /run/pve-maintenance-test/apt-arguments
-      register: pve_maintenance_planned_report_apt
+      register: pve_maintenance_disabled_replication_report_apt
 
-    - name: Verify planned-singleton report never executes APT
+    - name: Inspect lock after disabled historical peer replication report
+      ansible.builtin.stat:
+        path: /etc/pve/priv/.pve-maintenance.lock
+      register: pve_maintenance_disabled_replication_report_lock
+
+    - name: Verify disabled historical peer replication report is report-only
       ansible.builtin.assert:
         that:
           - >-
             '-o DPkg::Lock::Timeout=120 update' in
-            (pve_maintenance_planned_report_apt.content | b64decode)
+            (pve_maintenance_disabled_replication_report_apt.content | b64decode)
           - >-
             '-o DPkg::Lock::Timeout=120 -s --no-remove dist-upgrade' in
-            (pve_maintenance_planned_report_apt.content | b64decode)
-          - "'-y ' not in (pve_maintenance_planned_report_apt.content | b64decode)"
+            (pve_maintenance_disabled_replication_report_apt.content | b64decode)
+          - >-
+            '-y ' not in
+            (pve_maintenance_disabled_replication_report_apt.content | b64decode)
+          - not pve_maintenance_disabled_replication_report_lock.stat.exists
+
+    - name: Remove disabled historical peer replication fixture
+      ansible.builtin.file:
+        path: /run/pve-maintenance-test/replication-disabled-failed
+        state: absent
 
     - name: Reset APT command log before unacknowledged singleton execute
       ansible.builtin.copy:
