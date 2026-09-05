@@ -9,6 +9,7 @@
 # Edit at https://www.toptal.com/developers/gitignore?templates=python,ansible,sublimetext,visualstudiocode,linux,windows,macos
 
 ### Ansible ###
+.ansible/
 *.retry
 collections/ansible_collections/**
 encrypt.py

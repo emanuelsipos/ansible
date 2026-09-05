@@ -5,5 +5,6 @@
     tailscale_dns_resolv_conf_path: /etc/tailscale-dns-test/resolv.conf
     tailscale_dns_resolv_conf_target: /etc/tailscale-dns-test/stub-resolv.conf
     tailscale_dns_tailscaled_service: systemd-resolved
+    tailscale_dns_dhcp_lease_dir: /etc/tailscale-dns-test/dhcp
   roles:
     - role: tailscale_dns

@@ -55,6 +55,7 @@
           - _tailscale_dns_resolved_enabled.stdout == 'enabled'
           - "'[Resolve]' in (_tailscale_dns_dropin_before_restart.content | b64decode)"
           - "'DNS=192.0.2.53' in (_tailscale_dns_dropin_before_restart.content | b64decode)"
+          - "'fd00:10::1' in (_tailscale_dns_dropin_before_restart.content | b64decode)"
           - "'127.0.0.53' not in (_tailscale_dns_dropin_before_restart.content | b64decode)"
           - "'100.100.100.100' not in (_tailscale_dns_dropin_before_restart.content | b64decode)"
           - "'Domains=example.test' in (_tailscale_dns_dropin_before_restart.content | b64decode)"

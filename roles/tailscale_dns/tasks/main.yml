@@ -45,6 +45,47 @@
   register: _tailscale_dns_resolved_dropin_content
   when: _tailscale_dns_resolved_dropin.stat.exists | default(false)
 
+- name: Inspect the DHCP lease directory
+  ansible.builtin.stat:
+    path: "{{ tailscale_dns_dhcp_lease_dir }}"
+  register: _tailscale_dns_dhcp_lease_dir
+  when: tailscale_dns_bootstrap_from_dhcp | bool
+
+- name: Find DHCP lease files
+  ansible.builtin.find:
+    paths: "{{ tailscale_dns_dhcp_lease_dir }}"
+    patterns: "{{ tailscale_dns_dhcp_lease_patterns }}"
+    file_type: file
+    recurse: false
+  register: _tailscale_dns_dhcp_lease_files
+  when:
+    - tailscale_dns_bootstrap_from_dhcp | bool
+    - _tailscale_dns_dhcp_lease_dir.stat.isdir | default(false)
+
+- name: Read DHCP lease files
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: "{{ _tailscale_dns_dhcp_lease_files.files | default([]) }}"
+  register: _tailscale_dns_dhcp_lease_contents
+  no_log: true
+
+- name: Extract the latest DHCP nameservers from each lease file
+  ansible.builtin.set_fact:
+    _tailscale_dns_dhcp_nameserver_candidates: >-
+      {{
+        _tailscale_dns_dhcp_nameserver_candidates | default([])
+        + (
+          item.content
+          | b64decode
+          | regex_findall('(?mi)^\\s*(?:option\\s+)?(?:domain-name-servers|dhcp6\\.name-servers)\\s+([^;]+);')
+          | last
+          | default('')
+          | regex_findall(_tailscale_dns_dhcp_address_token_pattern)
+        )
+      }}
+  loop: "{{ _tailscale_dns_dhcp_lease_contents.results | default([]) }}"
+  no_log: true
+
 - name: Inspect the resolved configuration ownership marker
   ansible.builtin.stat:
     path: "{{ tailscale_dns_state_marker }}"
@@ -86,6 +127,14 @@
         | map('lower')
         | list
       }}
+
+- name: Add DHCP lease resolver candidates
+  ansible.builtin.set_fact:
+    _tailscale_dns_nameserver_candidates: >-
+      {{
+        _tailscale_dns_nameserver_candidates
+        + (_tailscale_dns_dhcp_nameserver_candidates | default([]))
+      }}
     _tailscale_dns_dropin_nameserver_candidates: >-
       {{
         _tailscale_dns_resolved_dropin_content.content | default('')
@@ -112,7 +161,7 @@
     _tailscale_dns_derived_nameservers: >-
       {{
         _tailscale_dns_nameserver_candidates
-        | select('match', _tailscale_dns_valid_ipv4_address_pattern)
+        | select('match', _tailscale_dns_valid_address_pattern)
         | reject('match', '^127(?:\\.\\d{1,3}){3}$')
         | reject('match', '^::ffff:127(?:\\.\\d{1,3}){3}$')
         | reject('in', ['0.0.0.0', '::', '::1'])
@@ -130,7 +179,7 @@
     _tailscale_dns_existing_dropin_nameservers: >-
       {{
         _tailscale_dns_dropin_nameserver_candidates
-        | select('match', _tailscale_dns_valid_ipv4_address_pattern)
+        | select('match', _tailscale_dns_valid_address_pattern)
         | reject('match', '^127(?:\.\d{1,3}){3}$')
         | reject('match', '^::ffff:127(?:\.\d{1,3}){3}$')
         | reject('in', ['0.0.0.0', '::', '::1'])
@@ -153,7 +202,7 @@
         (
           tailscale_dns_bootstrap_nameservers
           | map('lower')
-          | select('match', _tailscale_dns_valid_ipv4_address_pattern)
+          | select('match', _tailscale_dns_valid_address_pattern)
           | reject('match', '^127(?:\\.\\d{1,3}){3}$')
           | reject('match', '^::ffff:127(?:\\.\\d{1,3}){3}$')
           | reject('in', ['0.0.0.0', '::', '::1'])

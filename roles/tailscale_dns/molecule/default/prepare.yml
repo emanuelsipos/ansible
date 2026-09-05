@@ -20,15 +20,38 @@
         content: |
           nameserver 127.0.0.53
 
+    - name: Create DHCP lease fixture directory
+      ansible.builtin.file:
+        path: /etc/tailscale-dns-test/dhcp
+        state: directory
+        mode: "0755"
+
+    - name: Create DHCP lease fixture
+      ansible.builtin.copy:
+        dest: /etc/tailscale-dns-test/dhcp/dhclient.eth0.leases
+        mode: "0644"
+        content: |
+          lease {
+            option domain-name-servers 192.0.2.53;
+          }
+
+    - name: Create DHCPv6 lease fixture
+      ansible.builtin.copy:
+        dest: /etc/tailscale-dns-test/dhcp/dhclient6.eth0.leases
+        mode: "0644"
+        content: |
+          lease6 {
+            option dhcp6.name-servers fd00:10::1;
+          }
+
     - name: Create mutable resolver fixture
       ansible.builtin.copy:
         dest: /etc/tailscale-dns-test/resolv.conf
         mode: "0644"
         content: |
           search example.test tailnet.ts.net
-          nameserver 127.0.0.53
           nameserver 100.100.100.100
-          nameserver 192.0.2.53
+          nameserver fd7a:115c:a1e0::53
 
     - name: Create unsafe resolver fixture
       ansible.builtin.copy:

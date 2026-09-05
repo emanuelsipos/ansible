@@ -134,8 +134,12 @@ search domains from the current resolver configuration in
 `/etc/systemd/resolved.conf.d/tailscale-dns.conf`, excluding local and Tailscale
 resolver addresses and Tailscale search domains. Inferred drop-ins are preserved
 on later runs; define
-`tailscale_dns_bootstrap_nameservers` with IPv4 resolver addresses and optionally
+`tailscale_dns_bootstrap_nameservers` with resolver IP addresses and optionally
 `tailscale_dns_bootstrap_search_domains` to explicitly manage their values.
+For DHCP-managed Debian hosts, the role can read `domain-name-servers` and
+`dhcp6.name-servers` values from `/var/lib/dhcp/dhclient*.leases` when the
+current resolver file contains only Tailscale DNS. Explicit bootstrap variables
+remain available for static hosts or unusual lease locations.
 During a resolver migration, the role stops `tailscaled` before changing
 `/etc/resolv.conf` and starts it after the systemd-resolved stub is active.
 When no safe upstream resolver is present for migration or drop-in creation,
