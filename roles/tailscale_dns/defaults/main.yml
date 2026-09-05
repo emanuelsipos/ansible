@@ -9,6 +9,9 @@ tailscale_dns_state_dir: /var/lib/tailscale-dns
 tailscale_dns_state_marker: "{{ tailscale_dns_state_dir }}/managed"
 tailscale_dns_restart_tailscaled: true
 tailscale_dns_tailscaled_service: tailscaled
+tailscale_dns_tailscaled_unit: tailscaled.service
+tailscale_dns_tailscaled_dropin_dir: "/etc/systemd/system/{{ tailscale_dns_tailscaled_unit }}.d"
+tailscale_dns_tailscaled_dropin_path: "{{ tailscale_dns_tailscaled_dropin_dir }}/tailscale-dns.conf"
 tailscale_dns_dhcp_lease_dir: /var/lib/dhcp
 tailscale_dns_dhcp_lease_patterns:
   - dhclient*.leases

@@ -145,6 +145,9 @@ During a resolver migration, the role can stop `tailscaled` before changing
 The main Tailscale playbook leaves `tailscaled` running when the inventory
 connection uses a `.ts.net` hostname, so those hosts do not lose their SSH
 connection during the migration; other hosts use the stop/start ordering.
+The role also installs a `tailscaled.service` drop-in that starts
+`systemd-resolved` first and restores the stub link before Tailscale starts,
+keeping resolver ownership correct across service restarts and reboots.
 When no safe upstream resolver is present for migration or drop-in creation,
 the role fails closed and instructs you to set
 `tailscale_dns_bootstrap_nameservers`. Debian's existing `isc-dhcp-client`

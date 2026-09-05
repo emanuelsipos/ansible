@@ -9,6 +9,8 @@
     tailscale_dns_resolved_dropin_path: /etc/systemd/resolved.conf.d/tailscale-dns.conf
     tailscale_dns_state_dir: /etc/tailscale-dns-test/state
     tailscale_dns_state_marker: /etc/tailscale-dns-test/state/managed
+    tailscale_dns_tailscaled_unit: tailscaled.service
+    tailscale_dns_tailscaled_dropin_path: /etc/systemd/system/tailscaled.service.d/tailscale-dns.conf
   tasks:
     - name: Gather package facts
       ansible.builtin.package_facts:
@@ -43,6 +45,11 @@
         src: "{{ tailscale_dns_resolved_dropin_path }}"
       register: _tailscale_dns_dropin_before_restart
 
+    - name: Read the tailscaled startup drop-in
+      ansible.builtin.slurp:
+        src: "{{ tailscale_dns_tailscaled_dropin_path }}"
+      register: _tailscale_dns_tailscaled_dropin
+
     - name: Inspect the resolved drop-in ownership marker
       ansible.builtin.stat:
         path: "{{ tailscale_dns_state_marker }}"
@@ -54,6 +61,9 @@
           - "'systemd-resolved' in ansible_facts.packages"
           - _tailscale_dns_resolved_enabled.stdout == 'enabled'
           - "'[Resolve]' in (_tailscale_dns_dropin_before_restart.content | b64decode)"
+          - "'Wants=systemd-resolved.service' in (_tailscale_dns_tailscaled_dropin.content | b64decode)"
+          - "'After=systemd-resolved.service' in (_tailscale_dns_tailscaled_dropin.content | b64decode)"
+          - "'ExecStartPre=/usr/bin/ln -sfn /etc/tailscale-dns-test/stub-resolv.conf /etc/tailscale-dns-test/resolv.conf' in (_tailscale_dns_tailscaled_dropin.content | b64decode)"
           - "'DNS=192.0.2.53' in (_tailscale_dns_dropin_before_restart.content | b64decode)"
           - "'fd00:10::1' in (_tailscale_dns_dropin_before_restart.content | b64decode)"
           - "'127.0.0.53' not in (_tailscale_dns_dropin_before_restart.content | b64decode)"

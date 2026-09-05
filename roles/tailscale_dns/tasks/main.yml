@@ -348,6 +348,25 @@
   when:
     - (_tailscale_dns_dropin_needed | bool) or (_tailscale_dns_resolved_dropin.stat.exists | default(false))
 
+- name: Ensure tailscaled systemd drop-in directory exists
+  ansible.builtin.file:
+    path: "{{ tailscale_dns_tailscaled_dropin_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Configure tailscaled resolver startup ordering
+  ansible.builtin.copy:
+    dest: "{{ tailscale_dns_tailscaled_dropin_path }}"
+    mode: "0644"
+    content: |
+      [Unit]
+      Wants={{ tailscale_dns_resolved_service }}.service
+      After={{ tailscale_dns_resolved_service }}.service
+
+      [Service]
+      ExecStartPre=/usr/bin/ln -sfn {{ tailscale_dns_resolv_conf_target }} {{ tailscale_dns_resolv_conf_path }}
+  notify: Reload systemd
+
 - name: Stop tailscaled before changing resolver ownership
   ansible.builtin.systemd_service:
     name: "{{ tailscale_dns_tailscaled_service }}"
