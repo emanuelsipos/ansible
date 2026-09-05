@@ -9,6 +9,7 @@
       - source
       - com.sun:auto-snapshot
       - "{{ pve_zfs_snapshot_policy_dataset.key }}"
+  check_mode: false
   register: _pve_zfs_snapshot_policy_base_property
   changed_when: false
 
@@ -32,6 +33,7 @@
       - value
       - "com.sun:auto-snapshot:{{ item.key }}"
       - "{{ pve_zfs_snapshot_policy_dataset.key }}"
+  check_mode: false
   loop: "{{ pve_zfs_snapshot_policy_tiers | dict2items }}"
   loop_control:
     label: "{{ pve_zfs_snapshot_policy_dataset.key }}:{{ item.key }}"

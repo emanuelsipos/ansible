@@ -227,6 +227,7 @@
         argv:
           - "{{ pve_zfs_snapshot_policy_executable }}"
           - --help
+      check_mode: false
       register: _pve_zfs_snapshot_policy_executable_help
       changed_when: false
 
@@ -263,6 +264,7 @@
           - -o
           - name
           - "{{ item.key }}"
+      check_mode: false
       loop: "{{ _pve_zfs_snapshot_policy_datasets | dict2items }}"
       loop_control:
         label: "{{ item.key }}"
@@ -281,6 +283,7 @@
           - "{{ pve_zfs_snapshot_policy_dpkg_divert_executable }}"
           - --truename
           - "{{ item }}"
+      check_mode: false
       loop: "{{ pve_zfs_snapshot_policy_package_cron_files }}"
       register: _pve_zfs_snapshot_policy_cron_diversions
       changed_when: false
