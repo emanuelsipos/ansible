@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: "emanuelsipos"
+  description: "Disable retained APT package archives and clean the cache"
+  license: MIT
+  min_ansible_version: "2.21"
+
+  platforms:
+    - name: Debian
+      versions: ["bookworm"]
+
+dependencies: []

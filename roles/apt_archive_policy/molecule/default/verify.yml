@@ -1,0 +1,88 @@
+---
+- name: Verify
+  hosts: all
+  tasks:
+    - name: Read managed APT archive policy
+      ansible.builtin.slurp:
+        src: /etc/apt/apt.conf.d/99-apt-archive-policy
+      register: apt_archive_policy_content
+
+    - name: Read effective APT archive policy
+      ansible.builtin.command:
+        argv:
+          - apt-config
+          - dump
+      register: apt_archive_policy_effective_config
+      changed_when: false
+
+    - name: Inspect APT archive fixture
+      ansible.builtin.stat:
+        path: /var/cache/apt/archives/molecule-apt-archive-policy-fixture.deb
+      register: apt_archive_policy_fixture
+
+    - name: Inspect APT archive lock file
+      ansible.builtin.stat:
+        path: /var/cache/apt/archives/lock
+      register: apt_archive_policy_lock
+
+    - name: Verify APT archive policy and cleanup
+      ansible.builtin.assert:
+        that:
+          - >-
+            'APT::Keep-Downloaded-Packages "false";' in
+            (apt_archive_policy_content.content | b64decode)
+          - >-
+            'Binary::apt::APT::Keep-Downloaded-Packages "false";' in
+            (apt_archive_policy_content.content | b64decode)
+          - >-
+            'APT::Keep-Downloaded-Packages "false";' in
+            apt_archive_policy_effective_config.stdout
+          - >-
+            'Binary::apt::APT::Keep-Downloaded-Packages "false";' in
+            apt_archive_policy_effective_config.stdout
+          - not apt_archive_policy_fixture.stat.exists
+          - apt_archive_policy_lock.stat.exists
+
+    - name: Create check-mode APT archive fixture
+      ansible.builtin.copy:
+        dest: /var/cache/apt/archives/molecule-apt-check-mode-fixture.deb
+        content: molecule APT check-mode fixture
+        mode: "0644"
+
+    - name: Reapply APT archive policy in check mode
+      ansible.builtin.include_role:
+        name: apt_archive_policy
+        apply:
+          check_mode: true
+      vars:
+        apt_archive_policy_clean_existing: true
+
+    - name: Inspect check-mode APT archive fixture
+      ansible.builtin.stat:
+        path: /var/cache/apt/archives/molecule-apt-check-mode-fixture.deb
+      register: apt_archive_policy_check_mode_fixture
+
+    - name: Verify check mode preserves APT archives
+      ansible.builtin.assert:
+        that:
+          - apt_archive_policy_check_mode_fixture.stat.exists
+
+    - name: Create default-policy APT archive fixture
+      ansible.builtin.copy:
+        dest: /var/cache/apt/archives/molecule-apt-default-policy-fixture.deb
+        content: molecule APT default-policy fixture
+        mode: "0644"
+
+    - name: Reapply default APT archive policy
+      ansible.builtin.include_role:
+        name: apt_archive_policy
+
+    - name: Inspect default-policy APT archive fixture
+      ansible.builtin.stat:
+        path: /var/cache/apt/archives/molecule-apt-default-policy-fixture.deb
+      register: apt_archive_policy_default_fixture
+
+    - name: Verify default policy leaves existing archives for maintenance
+      ansible.builtin.assert:
+        that:
+          - apt_archive_policy_default_fixture.stat.exists

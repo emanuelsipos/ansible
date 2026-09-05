@@ -1,0 +1,7 @@
+---
+- name: Converge
+  hosts: all
+  vars:
+    apt_archive_policy_clean_existing: true
+  roles:
+    - role: apt_archive_policy

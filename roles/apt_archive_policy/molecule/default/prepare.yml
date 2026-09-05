@@ -1,0 +1,21 @@
+---
+- name: Prepare
+  hosts: all
+  tasks:
+    - name: Ensure APT archive directory exists
+      ansible.builtin.file:
+        path: /var/cache/apt/archives
+        state: directory
+        mode: "0755"
+
+    - name: Create APT archive fixture
+      ansible.builtin.copy:
+        dest: /var/cache/apt/archives/molecule-apt-archive-policy-fixture.deb
+        content: molecule APT archive fixture
+        mode: "0644"
+
+    - name: Ensure APT archive lock file exists
+      ansible.builtin.file:
+        path: /var/cache/apt/archives/lock
+        state: touch
+        mode: "0640"

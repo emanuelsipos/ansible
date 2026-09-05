@@ -24,6 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         role:
+          - apt_archive_policy
           - github_release_download
           - journald_retention
           - pve_host_backup

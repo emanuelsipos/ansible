@@ -1,0 +1,76 @@
+---
+- name: Validate Debian-family support
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+    quiet: true
+    fail_msg: apt_archive_policy supports Debian-family hosts
+  tags: [base, apt]
+
+- name: Disable retention of downloaded APT packages
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/99-apt-archive-policy
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      // Managed by Ansible role apt_archive_policy.
+      APT::Keep-Downloaded-Packages "false";
+      Binary::apt::APT::Keep-Downloaded-Packages "false";
+  tags: [base, apt]
+
+- name: Inspect existing APT package archives
+  ansible.builtin.find:
+    paths: /var/cache/apt/archives
+    patterns: "*.deb"
+    file_type: file
+    recurse: false
+  register: apt_archive_policy_existing_archives
+  when: apt_archive_policy_clean_existing | bool
+  tags: [base, apt]
+
+- name: Inspect package-manager process activity before cleaning archives
+  ansible.builtin.command:
+    argv: "{{ ['pgrep'] + item }}"
+  loop:
+    - [--exact, apt]
+    - [--exact, apt-get]
+    - [--exact, dpkg]
+    - [--full, --, '(^|/)unattended-upgrade([.][^[:space:]]+)?([[:space:]]|$)']
+    - [--full, --, '^(/bin/sh[[:space:]]+)?/usr/lib/apt/apt[.]systemd[.]daily([[:space:]]|$)']
+  register: apt_archive_policy_package_processes
+  changed_when: false
+  failed_when: false
+  when:
+    - apt_archive_policy_clean_existing | bool
+    - apt_archive_policy_existing_archives.matched > 0
+    - not ansible_check_mode
+  tags: [base, apt]
+
+- name: Require idle package management before cleaning archives
+  ansible.builtin.assert:
+    that:
+      - >-
+        apt_archive_policy_package_processes.results
+        | selectattr('rc', 'equalto', 0) | list | length == 0
+    quiet: true
+    fail_msg: >-
+      Package management is active. Let the current transaction finish before
+      cleaning downloaded APT package archives.
+  when:
+    - apt_archive_policy_clean_existing | bool
+    - apt_archive_policy_existing_archives.matched > 0
+    - not ansible_check_mode
+  tags: [base, apt]
+
+- name: Clean existing APT package archives
+  ansible.builtin.command:
+    argv:
+      - apt-get
+      - clean
+  changed_when: true
+  when:
+    - apt_archive_policy_clean_existing | bool
+    - apt_archive_policy_existing_archives.matched > 0
+    - not ansible_check_mode
+  tags: [base, apt]

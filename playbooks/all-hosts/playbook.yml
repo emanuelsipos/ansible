@@ -5,6 +5,8 @@
     - role: hifis.unattended_upgrades
       tags: [base, upgrades]
       when: inventory_hostname not in groups.get('pve', [])
+    - role: apt_archive_policy
+      tags: [base, apt]
     - role: journald_retention
       tags: [base, journald]
     - role: zsh
