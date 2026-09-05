@@ -187,7 +187,9 @@
     - name: Assert local hostname matches snapshot inventory host
       ansible.builtin.assert:
         that:
-          - _pve_zfs_snapshot_policy_local_hostname.stdout == inventory_hostname
+          - >-
+            (_pve_zfs_snapshot_policy_local_hostname.stdout | trim)
+            == (inventory_hostname | trim)
         quiet: true
         fail_msg: >-
           Refusing to apply ZFS snapshot policy because the local hostname does

@@ -77,7 +77,9 @@
     - name: Assert local PVE hostname matches the scrub policy host key
       ansible.builtin.assert:
         that:
-          - _pve_resource_scheduling_local_hostname.stdout == inventory_hostname
+          - >-
+            (_pve_resource_scheduling_local_hostname.stdout | trim)
+            == (inventory_hostname | trim)
         quiet: true
         fail_msg: >-
           Refusing to apply PVE scrub scheduling because the local hostname
