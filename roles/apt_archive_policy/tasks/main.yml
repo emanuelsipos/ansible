@@ -68,7 +68,11 @@
     argv:
       - apt-get
       - clean
+  register: apt_archive_policy_clean_result
   changed_when: true
+  until: apt_archive_policy_clean_result.rc == 0
+  retries: 60
+  delay: 2
   when:
     - apt_archive_policy_clean_existing | bool
     - apt_archive_policy_existing_archives.matched > 0
