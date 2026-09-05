@@ -1,6 +1,8 @@
 ---
 galaxy_info:
-  author: Emanuel Sipos
+  author: emanuelsipos
+  namespace: emanuelsipos
+  role_name: pangolin_access_log_rotation
   description: Rotate Pangolin Traefik access logs with the supported USR1 reopen signal
   license: MIT
   min_ansible_version: "2.16"

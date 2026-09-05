@@ -52,6 +52,7 @@
     that:
       - >-
         apt_archive_policy_package_processes.results
+        | rejectattr('skipped', 'defined')
         | selectattr('rc', 'equalto', 0) | list | length == 0
     quiet: true
     fail_msg: >-
