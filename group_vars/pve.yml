@@ -112,7 +112,7 @@ pve_zfs_snapshot_policy_host_datasets:
     data3/proxmox: disabled
     data3/proxmox-backup-server: disabled
     data3/userdata: disabled
-    data3/userdata/game-saves: userdata
+    data3/userdata/game-saves: app
     data3/userdata/photos: userdata
 
 # io completed candidate review, manifest-bound cleanup, and creation testing.
