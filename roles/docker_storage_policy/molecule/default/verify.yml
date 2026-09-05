@@ -1,0 +1,53 @@
+---
+- name: Verify
+  hosts: all
+  tasks:
+    - name: Run Docker storage report fixture
+      ansible.builtin.command: /usr/local/sbin/docker-storage-report
+      register: docker_storage_policy_report
+      changed_when: false
+
+    - name: Run Docker storage report fixture again
+      ansible.builtin.command: /usr/local/sbin/docker-storage-report
+      register: docker_storage_policy_second_report
+      changed_when: false
+
+    - name: Corrupt Docker storage report state fixture
+      ansible.builtin.copy:
+        dest: /var/lib/docker-storage-policy/last-report.json
+        content: "not-json\n"
+        mode: "0640"
+
+    - name: Verify Docker storage report recovers from corrupt state
+      ansible.builtin.command: /usr/local/sbin/docker-storage-report
+      register: docker_storage_policy_recovered_report
+      changed_when: false
+
+    - name: Read Docker build-cache prune service
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/docker-build-cache-prune.service
+      register: docker_storage_policy_build_prune_service
+
+    - name: Inspect Docker storage policy timers
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+      loop:
+        - docker-storage-report.timer
+        - docker-build-cache-prune.timer
+      register: docker_storage_policy_timers
+
+    - name: Verify Docker storage report and pruning policy
+      ansible.builtin.assert:
+        that:
+          - "'growth_estimated_bytes=initial' in docker_storage_policy_report.stdout"
+          - "'growth_estimated_bytes=0' in docker_storage_policy_second_report.stdout"
+          - "'ignoring invalid prior state' in docker_storage_policy_recovered_report.stderr"
+          - "'container_writable|name=fixture|bytes=2147483648' in docker_storage_policy_report.stdout"
+          - "'dangling_volume|name=test-volume' in docker_storage_policy_report.stdout"
+          - >-
+            'builder prune --force --filter until=168h' in
+            (docker_storage_policy_build_prune_service.content | b64decode)
+          - >-
+            docker_storage_policy_timers.results
+            | map(attribute='status.UnitFileState')
+            | unique | list == ['enabled']

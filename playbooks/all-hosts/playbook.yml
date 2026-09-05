@@ -82,6 +82,8 @@
             max-file: "3"
     - role: pangolin_access_log_rotation
       tags: [docker, pangolin, logrotate]
+    - role: docker_storage_policy
+      tags: [docker, docker_storage]
     - role: sysctl
       tags: [networking, sysctl]
       vars:

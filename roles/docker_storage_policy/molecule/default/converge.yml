@@ -1,0 +1,8 @@
+---
+- name: Converge
+  hosts: all
+  vars:
+    docker_storage_policy_docker_cli: /usr/local/bin/docker-storage-policy-test
+    docker_storage_policy_fail_on_writable_warning: false
+  roles:
+    - role: docker_storage_policy

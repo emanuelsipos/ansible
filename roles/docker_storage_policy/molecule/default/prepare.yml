@@ -1,0 +1,43 @@
+---
+- name: Prepare
+  hosts: all
+  tasks:
+    - name: Install fake Docker CLI
+      ansible.builtin.copy:
+        dest: /usr/local/bin/docker-storage-policy-test
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          case "$*" in
+            "system df --format "*)
+              printf '%s\n' \
+                '{"Type":"Images","TotalCount":"2","Active":"1","Size":"2GB","Reclaimable":"1GB (50%)"}' \
+                '{"Type":"Containers","TotalCount":"1","Active":"1","Size":"2.1GB","Reclaimable":"0B (0%)"}' \
+                '{"Type":"Local Volumes","TotalCount":"1","Active":"0","Size":"10MB","Reclaimable":"10MB (100%)"}' \
+                '{"Type":"Build Cache","TotalCount":"1","Active":"0","Size":"20MB","Reclaimable":"20MB"}'
+              ;;
+            "ps -aq")
+              echo test-container
+              ;;
+            "inspect --size test-container")
+              echo '[{"Name":"/fixture","SizeRw":2147483648,'\
+              '"Config":{"Labels":{"com.docker.compose.project":"test",'\
+              '"com.docker.compose.service":"fixture"}}}]'
+              ;;
+            "volume ls -q --filter dangling=true")
+              echo test-volume
+              ;;
+            "volume inspect test-volume")
+              echo '[{"Name":"test-volume","Driver":"local",'\
+              '"Mountpoint":"/var/lib/docker/volumes/test-volume/_data",'\
+              '"Labels":{"com.docker.compose.project":"old"}}]'
+              ;;
+            "builder prune --force --filter until=168h")
+              echo 'Total reclaimed space: 0B'
+              ;;
+            *)
+              exit 2
+              ;;
+          esac

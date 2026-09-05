@@ -25,6 +25,7 @@ jobs:
       matrix:
         role:
           - apt_archive_policy
+          - docker_storage_policy
           - github_release_download
           - journald_retention
           - pangolin_access_log_rotation

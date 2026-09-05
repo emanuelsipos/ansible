@@ -1,0 +1,162 @@
+#!/usr/bin/python3
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+DOCKER = {{ docker_storage_policy_docker_cli | to_json }}
+STATE_PATH = Path(
+    os.environ.get(
+        "DOCKER_STORAGE_POLICY_STATE_PATH",
+        "/var/lib/docker-storage-policy/last-report.json",
+    )
+)
+WARN_BYTES = {{ docker_storage_policy_writable_layer_warn_bytes | int }}
+FAIL_ON_WARNING = {{ docker_storage_policy_fail_on_writable_warning | ternary('True', 'False') }}
+SIZE_PATTERN = re.compile(r"^([0-9]+(?:[.][0-9]+)?)([kMGTPE]?B)$")
+SIZE_MULTIPLIERS = {
+    "B": 1,
+    "kB": 1000,
+    "MB": 1000**2,
+    "GB": 1000**3,
+    "TB": 1000**4,
+    "PB": 1000**5,
+    "EB": 1000**6,
+}
+
+
+def run(*args):
+    return subprocess.run(
+        [DOCKER, *args],
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+    ).stdout
+
+
+def parse_size(value):
+    match = SIZE_PATTERN.match(value.split()[0])
+    if not match:
+        raise ValueError(f"Unsupported Docker size: {value}")
+    return int(float(match.group(1)) * SIZE_MULTIPLIERS[match.group(2)])
+
+
+def read_state():
+    try:
+        state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (json.JSONDecodeError, TypeError, ValueError) as error:
+        print(f"WARNING: ignoring invalid prior state: {error}", file=sys.stderr)
+        return {}
+    if not isinstance(state, dict) or not isinstance(state.get("totals", {}), dict):
+        print("WARNING: ignoring invalid prior state structure", file=sys.stderr)
+        return {}
+    if any(not isinstance(value, int) for value in state.get("totals", {}).values()):
+        print("WARNING: ignoring invalid prior state values", file=sys.stderr)
+        return {}
+    return state
+
+
+def write_state(state):
+    STATE_PATH.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
+    descriptor, temporary_path = tempfile.mkstemp(dir=STATE_PATH.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(state, handle, sort_keys=True)
+            handle.write("\n")
+        os.chmod(temporary_path, 0o640)
+        os.replace(temporary_path, STATE_PATH)
+    finally:
+        if os.path.exists(temporary_path):
+            os.unlink(temporary_path)
+
+
+def storage_totals():
+    rows = []
+    output = run("system", "df", "--format", "{% raw %}{{json .}}{% endraw %}")
+    for line in output.splitlines():
+        if line:
+            rows.append(json.loads(line))
+    return rows
+
+
+def container_layers():
+    container_ids = run("ps", "-aq").split()
+    if not container_ids:
+        return []
+    return json.loads(run("inspect", "--size", *container_ids))
+
+
+def dangling_volumes():
+    names = run("volume", "ls", "-q", "--filter", "dangling=true").split()
+    if not names:
+        return []
+    return json.loads(run("volume", "inspect", *names))
+
+
+def main():
+    previous = read_state().get("totals", {})
+    totals = {}
+
+    for row in storage_totals():
+        category = row["Type"].lower().replace(" ", "_")
+        size = parse_size(row["Size"])
+        reclaimable = parse_size(row["Reclaimable"])
+        totals[category] = size
+        growth = size - previous[category] if category in previous else "initial"
+        print(
+            f"docker_storage|type={category}|estimated_bytes={size}"
+            f"|growth_estimated_bytes={growth}"
+            f"|reclaimable_estimated_bytes={reclaimable}|active={row['Active']}"
+            f"|total={row['TotalCount']}"
+        )
+
+    warnings = []
+    for container in sorted(
+        container_layers(), key=lambda item: item.get("SizeRw") or 0, reverse=True
+    ):
+        size = container.get("SizeRw") or 0
+        labels = container.get("Config", {}).get("Labels") or {}
+        name = container.get("Name", "unknown").lstrip("/")
+        project = labels.get("com.docker.compose.project", "")
+        service = labels.get("com.docker.compose.service", "")
+        print(
+            f"container_writable|name={name}|bytes={size}"
+            f"|compose_project={project}|compose_service={service}"
+        )
+        if size > WARN_BYTES:
+            warnings.append(f"{name}={size}")
+
+    for volume in dangling_volumes():
+        print(
+            "dangling_volume"
+            f"|name={volume.get('Name', '')}"
+            f"|driver={volume.get('Driver', '')}"
+            f"|mountpoint={volume.get('Mountpoint', '')}"
+            f"|labels={json.dumps(volume.get('Labels') or {}, sort_keys=True)}"
+        )
+
+    write_state({"totals": totals})
+
+    if warnings:
+        print(
+            "WARNING: writable layers exceed "
+            f"{WARN_BYTES} bytes: {', '.join(warnings)}",
+            file=sys.stderr,
+        )
+        if FAIL_ON_WARNING:
+            return 1
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (OSError, subprocess.CalledProcessError, ValueError, json.JSONDecodeError) as error:
+        print(f"ERROR: Docker storage report failed: {error}", file=sys.stderr)
+        sys.exit(2)

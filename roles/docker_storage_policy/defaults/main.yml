@@ -1,0 +1,9 @@
+---
+docker_storage_policy_docker_cli: /usr/bin/docker
+docker_storage_policy_report_calendar: "*-*-* 06:15:00"
+docker_storage_policy_report_randomized_delay: 30m
+docker_storage_policy_writable_layer_warn_bytes: 1073741824
+docker_storage_policy_fail_on_writable_warning: true
+docker_storage_policy_build_prune_calendar: "Sun *-*-* 06:45:00"
+docker_storage_policy_build_prune_randomized_delay: 30m
+docker_storage_policy_build_prune_until: 168h

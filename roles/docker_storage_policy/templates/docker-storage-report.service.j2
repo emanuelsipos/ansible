@@ -1,0 +1,17 @@
+[Unit]
+Description=Report Docker storage totals, growth, writable layers, and dangling volumes
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock --exclusive --wait 3600 /run/lock/docker-storage-policy.lock /usr/local/sbin/docker-storage-report
+StateDirectory=docker-storage-policy
+StateDirectoryMode=0750
+TimeoutStartSec=2h
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/var/lib/docker-storage-policy
+RestrictAddressFamilies=AF_UNIX

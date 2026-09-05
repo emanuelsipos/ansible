@@ -1,0 +1,106 @@
+---
+- name: Validate Docker storage policy settings
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+      - docker_storage_policy_docker_cli is match('^/[A-Za-z0-9_./-]+$')
+      - not docker_storage_policy_docker_cli is search('[\r\n]')
+      - docker_storage_policy_report_calendar | length > 0
+      - docker_storage_policy_report_randomized_delay | length > 0
+      - docker_storage_policy_writable_layer_warn_bytes | int >= 1
+      - docker_storage_policy_fail_on_writable_warning is boolean
+      - docker_storage_policy_build_prune_calendar | length > 0
+      - docker_storage_policy_build_prune_randomized_delay | length > 0
+      - docker_storage_policy_build_prune_until is match('^[1-9][0-9]*(s|m|h)$')
+    quiet: true
+    fail_msg: Invalid Docker storage policy settings
+  tags: [docker, docker_storage]
+
+- name: Validate Docker storage policy calendars
+  ansible.builtin.command:
+    argv:
+      - systemd-analyze
+      - calendar
+      - "{{ item }}"
+  loop:
+    - "{{ docker_storage_policy_report_calendar }}"
+    - "{{ docker_storage_policy_build_prune_calendar }}"
+  changed_when: false
+  check_mode: false
+  tags: [docker, docker_storage]
+
+- name: Validate Docker storage policy randomized delays
+  ansible.builtin.command:
+    argv:
+      - systemd-analyze
+      - timespan
+      - "{{ item }}"
+  loop:
+    - "{{ docker_storage_policy_report_randomized_delay }}"
+    - "{{ docker_storage_policy_build_prune_randomized_delay }}"
+  changed_when: false
+  check_mode: false
+  tags: [docker, docker_storage]
+
+- name: Install Docker storage report script
+  ansible.builtin.template:
+    src: docker-storage-report.py.j2
+    dest: /usr/local/sbin/docker-storage-report
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [docker, docker_storage]
+
+- name: Install Docker storage report service
+  ansible.builtin.template:
+    src: docker-storage-report.service.j2
+    dest: /etc/systemd/system/docker-storage-report.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for Docker storage policy
+  tags: [docker, docker_storage]
+
+- name: Install Docker storage report timer
+  ansible.builtin.template:
+    src: docker-storage-report.timer.j2
+    dest: /etc/systemd/system/docker-storage-report.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for Docker storage policy
+  tags: [docker, docker_storage]
+
+- name: Install Docker build-cache prune service
+  ansible.builtin.template:
+    src: docker-build-cache-prune.service.j2
+    dest: /etc/systemd/system/docker-build-cache-prune.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for Docker storage policy
+  tags: [docker, docker_storage]
+
+- name: Install Docker build-cache prune timer
+  ansible.builtin.template:
+    src: docker-build-cache-prune.timer.j2
+    dest: /etc/systemd/system/docker-build-cache-prune.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for Docker storage policy
+  tags: [docker, docker_storage]
+
+- name: Apply Docker storage policy units
+  ansible.builtin.meta: flush_handlers
+  tags: [docker, docker_storage]
+
+- name: Enable Docker storage policy timers
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - docker-storage-report.timer
+    - docker-build-cache-prune.timer
+  tags: [docker, docker_storage]

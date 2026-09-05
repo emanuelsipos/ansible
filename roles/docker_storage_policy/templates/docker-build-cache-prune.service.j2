@@ -1,0 +1,18 @@
+[Unit]
+Description=Prune aged Docker build cache
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock --exclusive --wait 3600 /run/lock/docker-storage-policy.lock {{ docker_storage_policy_docker_cli }} builder prune --force --filter until={{ docker_storage_policy_build_prune_until }}
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=-/root/.docker/buildx
+RestrictAddressFamilies=AF_UNIX

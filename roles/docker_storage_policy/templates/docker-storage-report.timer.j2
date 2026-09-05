@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Docker storage report daily
+
+[Timer]
+OnCalendar={{ docker_storage_policy_report_calendar }}
+Persistent=true
+RandomizedDelaySec={{ docker_storage_policy_report_randomized_delay }}
+Unit=docker-storage-report.service
+
+[Install]
+WantedBy=timers.target

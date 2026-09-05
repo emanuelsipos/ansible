@@ -1,0 +1,11 @@
+[Unit]
+Description=Prune Docker build cache older than the configured age
+
+[Timer]
+OnCalendar={{ docker_storage_policy_build_prune_calendar }}
+Persistent=true
+RandomizedDelaySec={{ docker_storage_policy_build_prune_randomized_delay }}
+Unit=docker-build-cache-prune.service
+
+[Install]
+WantedBy=timers.target
