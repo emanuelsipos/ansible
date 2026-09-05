@@ -7,6 +7,7 @@ tailscale_dns_resolved_dropin_dir: /etc/systemd/resolved.conf.d
 tailscale_dns_resolved_dropin_path: "{{ tailscale_dns_resolved_dropin_dir }}/tailscale-dns.conf"
 tailscale_dns_state_dir: /var/lib/tailscale-dns
 tailscale_dns_state_marker: "{{ tailscale_dns_state_dir }}/managed"
+tailscale_dns_restart_tailscaled: true
 tailscale_dns_tailscaled_service: tailscaled
 tailscale_dns_bootstrap_nameservers: []
 tailscale_dns_bootstrap_search_domains: []

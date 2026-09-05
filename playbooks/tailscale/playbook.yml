@@ -5,10 +5,31 @@
   vars_files:
     - ../../vars/tailscale.yml
 
+  pre_tasks:
+    - name: Remove legacy Tailscale APT source definition
+      become: true
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/tailscale.list
+        state: absent
+      when: ansible_facts['os_family'] == 'Debian'
+      tags: [tailscale]
+
+    - name: Explain the check-mode Tailscale role limitation
+      ansible.builtin.debug:
+        msg: >-
+          Skipping artis3n.tailscale.machine in check mode because the pinned
+          role parses command output that Ansible does not execute in check mode.
+          Resolver configuration remains checkable.
+      when: ansible_check_mode
+      tags: [tailscale]
+
   roles:
     - role: artis3n.tailscale.machine
+      when: not ansible_check_mode
       tags: [tailscale]
 
     - role: tailscale_dns
+      vars:
+        tailscale_dns_restart_tailscaled: "{{ not ansible_check_mode }}"
       when: "'pve' not in group_names"
       tags: [tailscale]

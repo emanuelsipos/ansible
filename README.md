@@ -44,6 +44,11 @@ and configures Tailscale when it is absent, but skips the initial `tailscale up`
 On already-enrolled hosts, this keeps the existing node running without
 requiring the auth key on every run.
 
+The pinned third-party Tailscale role is skipped in Ansible check mode because
+it parses command output from a command that check mode does not execute. The
+resolver configuration remains previewable in check mode; normal runs execute
+the complete Tailscale installation and configuration.
+
 Production inventory is stored in Semaphore. The inventory must provide the
 groups shown in [`hosts.example`](hosts.example); templates may limit runs to a
 smaller host or group. It must also define `ansible_user` as an inventory
