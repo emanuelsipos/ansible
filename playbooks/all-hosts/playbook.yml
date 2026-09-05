@@ -80,8 +80,6 @@
           log-opts:
             max-size: "10m"
             max-file: "3"
-    - role: pangolin_access_log_rotation
-      tags: [docker, pangolin, logrotate]
     - role: docker_storage_policy
       tags: [docker, docker_storage]
     - role: sysctl
@@ -89,6 +87,13 @@
       vars:
         sysctl_settings: "{{ _komodo_sysctl }}"
         sysctl_drop_in_file: "/etc/sysctl.d/99-ipv6-forwarding.conf"
+
+- name: Pangolin access-log rotation
+  hosts: pangolin
+  tags: [pangolin, logrotate]
+  roles:
+    - role: pangolin_access_log_rotation
+      tags: [pangolin, logrotate]
 
 - name: Proxmox hosts
   hosts: pve

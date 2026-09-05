@@ -1,0 +1,36 @@
+---
+- name: Remove obsolete Pangolin access-log rotation
+  hosts: "komodo:!pangolin"
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Inspect obsolete Pangolin systemd units
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/{{ item }}"
+      loop:
+        - pangolin-access-logrotate.timer
+        - pangolin-access-logrotate.service
+      register: pangolin_obsolete_units
+
+    - name: Stop and disable obsolete Pangolin systemd units
+      ansible.builtin.systemd_service:
+        name: "{{ item.item }}"
+        enabled: false
+        state: stopped
+      loop: "{{ pangolin_obsolete_units.results }}"
+      when: item.stat.exists
+
+    - name: Remove obsolete Pangolin access-log rotation files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/pangolin-access-logrotate.conf
+        - /etc/systemd/system/pangolin-access-logrotate.timer
+        - /etc/systemd/system/pangolin-access-logrotate.service
+        - /var/lib/logrotate/pangolin-access-log.status
+
+    - name: Reload systemd after removing obsolete Pangolin units
+      ansible.builtin.systemd_service:
+        daemon_reload: true
