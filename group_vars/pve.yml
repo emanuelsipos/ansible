@@ -78,6 +78,12 @@ pve_zfs_snapshot_policy_profiles:
     daily: true
     weekly: true
     monthly: true
+  userdata:
+    frequent: false
+    hourly: false
+    daily: true
+    weekly: true
+    monthly: true
 
 pve_zfs_snapshot_policy_common_datasets:
   rpool: disabled
@@ -92,10 +98,22 @@ pve_zfs_snapshot_policy_host_datasets:
     data/proxmox: disabled
     data2: bulk
     data3: bulk
-    data3/frigate: disabled
-    data3/karakeep: app
+    data3/appdata: disabled
+    data3/appdata/birdnet: disabled
+    data3/appdata/birdnet/clips: bulk
+    data3/appdata/frigate: disabled
+    data3/appdata/frigate/media: disabled
+    data3/appdata/karakeep: disabled
+    data3/appdata/karakeep/assets: app
+    data3/appdata/languagetool: disabled
+    data3/appdata/languagetool/ngrams: disabled
+    data3/appdata/plex: disabled
+    data3/appdata/plex/media: disabled
     data3/proxmox: disabled
     data3/proxmox-backup-server: disabled
+    data3/userdata: disabled
+    data3/userdata/game-saves: userdata
+    data3/userdata/photos: userdata
 
 # io completed candidate review, manifest-bound cleanup, and creation testing.
 # Unlisted hosts, including europa, remain inactive until separately reviewed.
