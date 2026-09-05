@@ -83,7 +83,9 @@
         quiet: true
         fail_msg: >-
           Refusing to apply PVE scrub scheduling because the local hostname
-          does not match inventory_hostname
+          does not match inventory_hostname;
+          runtime={{ _pve_resource_scheduling_local_hostname.stdout | trim | to_json }}
+          inventory={{ inventory_hostname | trim | to_json }}
 
     - name: Discover local ZFS pools
       ansible.builtin.command:

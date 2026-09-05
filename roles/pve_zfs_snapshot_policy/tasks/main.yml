@@ -193,7 +193,9 @@
         quiet: true
         fail_msg: >-
           Refusing to apply ZFS snapshot policy because the local hostname does
-          not match inventory_hostname
+          not match inventory_hostname;
+          runtime={{ _pve_zfs_snapshot_policy_local_hostname.stdout | trim | to_json }}
+          inventory={{ inventory_hostname | trim | to_json }}
 
     - name: Inspect required snapshot executables
       ansible.builtin.stat:
