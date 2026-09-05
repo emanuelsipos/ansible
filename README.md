@@ -142,8 +142,9 @@ current resolver file contains only Tailscale DNS. Explicit bootstrap variables
 remain available for static hosts or unusual lease locations.
 During a resolver migration, the role can stop `tailscaled` before changing
 `/etc/resolv.conf` and start it after the systemd-resolved stub is active.
-The main Tailscale playbook leaves `tailscaled` running so hosts reached over
-Tailscale do not lose their SSH connection during the migration.
+The main Tailscale playbook leaves `tailscaled` running when the inventory
+connection uses a `.ts.net` hostname, so those hosts do not lose their SSH
+connection during the migration; other hosts use the stop/start ordering.
 When no safe upstream resolver is present for migration or drop-in creation,
 the role fails closed and instructs you to set
 `tailscale_dns_bootstrap_nameservers`. Debian's existing `isc-dhcp-client`

@@ -30,8 +30,14 @@
 
     - role: tailscale_dns
       vars:
-        # Stopping tailscaled would tear down SSH when this host is reached
-        # over Tailscale before the resolver symlink can be updated.
-        tailscale_dns_restart_tailscaled: false
+        # Preserve SSH when the inventory connection itself uses Tailscale.
+        tailscale_dns_restart_tailscaled: >-
+          {{
+            (not ansible_check_mode)
+            and not (
+              (ansible_host | default(inventory_hostname))
+              is search('\\.ts\\.net$')
+            )
+          }}
       when: "'pve' not in group_names"
       tags: [tailscale]
