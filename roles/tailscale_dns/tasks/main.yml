@@ -77,7 +77,7 @@
         + (
           item.content
           | b64decode
-          | regex_findall('(?mi)^\\s*(?:option\\s+)?(?:domain-name-servers|dhcp6\\.name-servers)\\s+([^;]+);')
+          | regex_findall('(?mi)^[ \\t]*(?:option[ \\t]+)?(?:domain-name-servers|dhcp6[.]name-servers)[ \\t]+([^;]+);')
           | last
           | default('')
           | regex_findall(_tailscale_dns_dhcp_address_token_pattern)
