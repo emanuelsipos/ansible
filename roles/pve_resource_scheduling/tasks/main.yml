@@ -71,6 +71,7 @@
         argv:
           - hostname
           - --short
+      check_mode: false
       register: _pve_resource_scheduling_local_hostname
       changed_when: false
 

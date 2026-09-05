@@ -181,6 +181,7 @@
         argv:
           - hostname
           - --short
+      check_mode: false
       register: _pve_zfs_snapshot_policy_local_hostname
       changed_when: false
 
