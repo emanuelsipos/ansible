@@ -1,0 +1,316 @@
+---
+- name: Validate systemd-resolved support
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+      - ansible_facts['service_mgr'] == 'systemd'
+    quiet: true
+    fail_msg: tailscale_dns supports Debian-family hosts managed by systemd
+
+- name: Gather package facts before installing systemd-resolved
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Determine whether systemd-resolved is already installed
+  ansible.builtin.set_fact:
+    _tailscale_dns_resolved_installed: >-
+      {{ tailscale_dns_resolved_package in ansible_facts.packages }}
+
+- name: Inspect the current resolver symlink
+  ansible.builtin.stat:
+    path: "{{ tailscale_dns_resolv_conf_path }}"
+    follow: false
+  register: _tailscale_dns_resolv_conf_link
+
+- name: Inspect the current resolver target
+  ansible.builtin.stat:
+    path: "{{ tailscale_dns_resolv_conf_path }}"
+    follow: true
+  register: _tailscale_dns_resolv_conf_target
+
+- name: Read the current resolver configuration
+  ansible.builtin.slurp:
+    src: "{{ tailscale_dns_resolv_conf_path }}"
+  register: _tailscale_dns_resolv_conf_before_content
+  when: _tailscale_dns_resolv_conf_target.stat.exists | default(false)
+
+- name: Inspect the resolved configuration drop-in
+  ansible.builtin.stat:
+    path: "{{ tailscale_dns_resolved_dropin_path }}"
+  register: _tailscale_dns_resolved_dropin
+
+- name: Read the existing resolved configuration drop-in
+  ansible.builtin.slurp:
+    src: "{{ tailscale_dns_resolved_dropin_path }}"
+  register: _tailscale_dns_resolved_dropin_content
+  when: _tailscale_dns_resolved_dropin.stat.exists | default(false)
+
+- name: Inspect the resolved configuration ownership marker
+  ansible.builtin.stat:
+    path: "{{ tailscale_dns_state_marker }}"
+  register: _tailscale_dns_state_marker
+
+- name: Determine whether DNS migration is needed
+  ansible.builtin.set_fact:
+    _tailscale_dns_migration_needed: >-
+      {{
+        (not (_tailscale_dns_resolved_installed | bool))
+        or not (
+          (_tailscale_dns_resolv_conf_link.stat.islnk | default(false))
+          and _tailscale_dns_resolv_conf_link.stat.lnk_source == tailscale_dns_resolv_conf_target
+        )
+      }}
+    _tailscale_dns_explicit_bootstrap: >-
+      {{
+        (tailscale_dns_bootstrap_nameservers | length > 0)
+        or (tailscale_dns_bootstrap_search_domains | length > 0)
+      }}
+
+- name: Extract bootstrap resolver candidates
+  ansible.builtin.set_fact:
+    _tailscale_dns_nameserver_candidates: >-
+      {{
+        _tailscale_dns_resolv_conf_before_content.content | default('')
+        | b64decode
+        | regex_findall('(?m)^\\s*nameserver\\s+([^\\s#]+)')
+        | map('lower')
+        | list
+      }}
+    _tailscale_dns_search_domain_candidates: >-
+      {{
+        _tailscale_dns_resolv_conf_before_content.content | default('')
+        | b64decode
+        | regex_findall('(?m)^\\s*(?:search|domain)\\s+([^#\\n]+)')
+        | map('split')
+        | flatten
+        | map('lower')
+        | list
+      }}
+    _tailscale_dns_dropin_nameserver_candidates: >-
+      {{
+        _tailscale_dns_resolved_dropin_content.content | default('')
+        | b64decode
+        | regex_findall('(?m)^\s*DNS\s*=\s*([^#\n]+)')
+        | map('split')
+        | flatten
+        | map('lower')
+        | list
+      }}
+    _tailscale_dns_dropin_search_domain_candidates: >-
+      {{
+        _tailscale_dns_resolved_dropin_content.content | default('')
+        | b64decode
+        | regex_findall('(?m)^\s*Domains\s*=\s*([^#\n]+)')
+        | map('split')
+        | flatten
+        | map('lower')
+        | list
+      }}
+
+- name: Filter safe bootstrap resolver candidates
+  ansible.builtin.set_fact:
+    _tailscale_dns_derived_nameservers: >-
+      {{
+        _tailscale_dns_nameserver_candidates
+        | select('match', _tailscale_dns_valid_ipv4_address_pattern)
+        | reject('match', '^127(?:\\.\\d{1,3}){3}$')
+        | reject('match', '^::ffff:127(?:\\.\\d{1,3}){3}$')
+        | reject('in', ['0.0.0.0', '::', '::1'])
+        | reject('in', tailscale_dns_tailscale_resolver_ips)
+        | unique
+        | list
+      }}
+    _tailscale_dns_derived_search_domains: >-
+      {{
+        _tailscale_dns_search_domain_candidates
+        | reject('match', '(^|\\.)ts\\.net\\.?$')
+        | unique
+        | list
+      }}
+    _tailscale_dns_existing_dropin_nameservers: >-
+      {{
+        _tailscale_dns_dropin_nameserver_candidates
+        | select('match', _tailscale_dns_valid_ipv4_address_pattern)
+        | reject('match', '^127(?:\.\d{1,3}){3}$')
+        | reject('match', '^::ffff:127(?:\.\d{1,3}){3}$')
+        | reject('in', ['0.0.0.0', '::', '::1'])
+        | reject('in', tailscale_dns_tailscale_resolver_ips)
+        | unique
+        | list
+      }}
+    _tailscale_dns_existing_dropin_search_domains: >-
+      {{
+        _tailscale_dns_dropin_search_domain_candidates
+        | reject('match', '(^|\.)ts\.net\.?$')
+        | unique
+        | list
+      }}
+
+- name: Select bootstrap resolver settings
+  ansible.builtin.set_fact:
+    _tailscale_dns_bootstrap_nameservers: >-
+      {{
+        (
+          tailscale_dns_bootstrap_nameservers
+          | map('lower')
+          | select('match', _tailscale_dns_valid_ipv4_address_pattern)
+          | reject('match', '^127(?:\\.\\d{1,3}){3}$')
+          | reject('match', '^::ffff:127(?:\\.\\d{1,3}){3}$')
+          | reject('in', ['0.0.0.0', '::', '::1'])
+          | reject('in', tailscale_dns_tailscale_resolver_ips)
+          | unique
+          | list
+        )
+        if tailscale_dns_bootstrap_nameservers | length > 0
+        else (
+          _tailscale_dns_derived_nameservers
+          if _tailscale_dns_derived_nameservers | length > 0
+          else _tailscale_dns_existing_dropin_nameservers
+        )
+      }}
+    _tailscale_dns_bootstrap_search_domains: >-
+      {{
+        (
+          tailscale_dns_bootstrap_search_domains
+          | map('lower')
+          | reject('match', '(^|\.)ts\.net\.?$')
+          | unique
+          | list
+        )
+        if tailscale_dns_bootstrap_search_domains | length > 0
+        else (
+          _tailscale_dns_derived_search_domains
+          if _tailscale_dns_derived_search_domains | length > 0
+          else _tailscale_dns_existing_dropin_search_domains
+        )
+      }}
+
+- name: Validate the existing resolved drop-in
+  ansible.builtin.set_fact:
+    _tailscale_dns_existing_dropin_valid: >-
+      {{
+        '[Resolve]' in (
+          _tailscale_dns_resolved_dropin_content.content | default('') | b64decode
+        )
+        and _tailscale_dns_existing_dropin_nameservers | length > 0
+      }}
+
+- name: Determine whether the resolved drop-in must be managed
+  ansible.builtin.set_fact:
+    _tailscale_dns_dropin_needed: >-
+      {{
+        (_tailscale_dns_explicit_bootstrap | bool)
+        or (_tailscale_dns_migration_needed | bool)
+        or (
+          (_tailscale_dns_state_marker.stat.exists | default(false))
+          and not (_tailscale_dns_resolved_dropin.stat.exists | default(false))
+        )
+        or (
+          (_tailscale_dns_resolved_dropin.stat.exists | default(false))
+          and not (_tailscale_dns_existing_dropin_valid | bool)
+        )
+      }}
+
+- name: Require a safe bootstrap nameserver for DNS migration
+  ansible.builtin.assert:
+    that:
+      - _tailscale_dns_bootstrap_nameservers | length > 0
+    quiet: true
+    fail_msg: >-
+      DNS migration or resolved drop-in management requires a safe upstream
+      nameserver. None was found in {{ tailscale_dns_resolv_conf_path }}. Set
+      tailscale_dns_bootstrap_nameservers to one or more upstream DNS server IP
+      addresses before rerunning.
+  when:
+    - (_tailscale_dns_migration_needed | bool) or (_tailscale_dns_dropin_needed | bool)
+
+- name: Inspect /etc/resolv.conf attributes before package installation
+  ansible.builtin.stat:
+    path: "{{ tailscale_dns_resolv_conf_path }}"
+    follow: false
+    get_attributes: true
+  register: _tailscale_dns_resolv_conf
+
+- name: Clear immutable flag from /etc/resolv.conf
+  ansible.builtin.file:
+    path: "{{ tailscale_dns_resolv_conf_path }}"
+    attributes: -i
+  when:
+    - _tailscale_dns_resolv_conf.stat.exists | default(false)
+    - "'immutable' in (_tailscale_dns_resolv_conf.stat.attributes | default([]))"
+
+- name: Install systemd-resolved
+  ansible.builtin.package:
+    name: "{{ tailscale_dns_resolved_package }}"
+    state: present
+  notify: Restart systemd-resolved
+
+- name: Enable and start systemd-resolved
+  ansible.builtin.systemd_service:
+    name: "{{ tailscale_dns_resolved_service }}"
+    enabled: true
+    state: started
+
+- name: Check for the systemd-resolved stub resolver
+  ansible.builtin.stat:
+    path: "{{ tailscale_dns_resolv_conf_target }}"
+  register: _tailscale_dns_stub_resolver
+
+- name: Assert the systemd-resolved stub resolver exists
+  ansible.builtin.assert:
+    that:
+      - _tailscale_dns_stub_resolver.stat.exists
+    quiet: true
+    fail_msg: systemd-resolved did not create the configured stub resolver
+
+- name: Ensure the resolved drop-in directory exists
+  ansible.builtin.file:
+    path: "{{ tailscale_dns_resolved_dropin_dir }}"
+    state: directory
+    mode: "0755"
+  when: _tailscale_dns_dropin_needed | bool
+
+- name: Configure persistent bootstrap DNS in systemd-resolved
+  ansible.builtin.copy:
+    dest: "{{ tailscale_dns_resolved_dropin_path }}"
+    mode: "0644"
+    content: |
+      [Resolve]
+      DNS={{ _tailscale_dns_bootstrap_nameservers | join(' ') }}
+      {% if _tailscale_dns_bootstrap_search_domains | length > 0 %}
+      Domains={{ _tailscale_dns_bootstrap_search_domains | join(' ') }}
+      {% endif %}
+  notify: Restart systemd-resolved
+  when: _tailscale_dns_dropin_needed | bool
+
+- name: Ensure the Tailscale DNS state directory exists
+  ansible.builtin.file:
+    path: "{{ tailscale_dns_state_dir }}"
+    state: directory
+    mode: "0755"
+  when:
+    - (_tailscale_dns_dropin_needed | bool) or (_tailscale_dns_resolved_dropin.stat.exists | default(false))
+
+- name: Record ownership of the resolved configuration drop-in
+  ansible.builtin.copy:
+    dest: "{{ tailscale_dns_state_marker }}"
+    mode: "0644"
+    content: "managed by the tailscale_dns Ansible role\n"
+  when:
+    - (_tailscale_dns_dropin_needed | bool) or (_tailscale_dns_resolved_dropin.stat.exists | default(false))
+
+- name: Restart systemd-resolved before changing the resolver symlink
+  ansible.builtin.meta: flush_handlers
+
+# Debian's isc-dhcp-client resolved enter/exit hooks update lease DNS data.
+# Do not restart networking or renew DHCP while changing the resolver symlink.
+- name: Point /etc/resolv.conf at the systemd-resolved stub resolver
+  ansible.builtin.file:
+    path: "{{ tailscale_dns_resolv_conf_path }}"
+    src: "{{ tailscale_dns_resolv_conf_target }}"
+    state: link
+    force: true
+  notify: Restart tailscaled
+
+- name: Restart tailscaled after switching the resolver symlink
+  ansible.builtin.meta: flush_handlers

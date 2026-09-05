@@ -1,0 +1,271 @@
+---
+- name: Verify Tailscale DNS integration
+  hosts: all
+  vars:
+    tailscale_dns_resolv_conf_path: /etc/tailscale-dns-test/resolv.conf
+    tailscale_dns_resolv_conf_target: /etc/tailscale-dns-test/stub-resolv.conf
+    tailscale_dns_resolved_service: systemd-resolved
+    tailscale_dns_resolved_dropin_dir: /etc/systemd/resolved.conf.d
+    tailscale_dns_resolved_dropin_path: /etc/systemd/resolved.conf.d/tailscale-dns.conf
+    tailscale_dns_state_dir: /etc/tailscale-dns-test/state
+    tailscale_dns_state_marker: /etc/tailscale-dns-test/state/managed
+  tasks:
+    - name: Gather package facts
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Check systemd-resolved is enabled
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-enabled
+          - systemd-resolved
+      register: _tailscale_dns_resolved_enabled
+      changed_when: false
+
+    - name: Check systemd-resolved is active
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - --quiet
+          - systemd-resolved
+      changed_when: false
+
+    - name: Check resolver fixture symlink
+      ansible.builtin.stat:
+        path: "{{ tailscale_dns_resolv_conf_path }}"
+        follow: false
+      register: _tailscale_dns_resolv_conf
+
+    - name: Read the inferred resolved drop-in
+      ansible.builtin.slurp:
+        src: "{{ tailscale_dns_resolved_dropin_path }}"
+      register: _tailscale_dns_dropin_before_restart
+
+    - name: Inspect the resolved drop-in ownership marker
+      ansible.builtin.stat:
+        path: "{{ tailscale_dns_state_marker }}"
+      register: _tailscale_dns_marker
+
+    - name: Assert systemd-resolved, resolver symlink, and persisted DNS state
+      ansible.builtin.assert:
+        that:
+          - "'systemd-resolved' in ansible_facts.packages"
+          - _tailscale_dns_resolved_enabled.stdout == 'enabled'
+          - "'[Resolve]' in (_tailscale_dns_dropin_before_restart.content | b64decode)"
+          - "'DNS=192.0.2.53' in (_tailscale_dns_dropin_before_restart.content | b64decode)"
+          - "'127.0.0.53' not in (_tailscale_dns_dropin_before_restart.content | b64decode)"
+          - "'100.100.100.100' not in (_tailscale_dns_dropin_before_restart.content | b64decode)"
+          - "'Domains=example.test' in (_tailscale_dns_dropin_before_restart.content | b64decode)"
+          - "'tailnet.ts.net' not in (_tailscale_dns_dropin_before_restart.content | b64decode)"
+          - _tailscale_dns_marker.stat.isreg
+          - _tailscale_dns_resolv_conf.stat.islnk
+          - _tailscale_dns_resolv_conf.stat.lnk_source == tailscale_dns_resolv_conf_target
+        quiet: true
+
+    - name: Restart systemd-resolved and verify persistent bootstrap state
+      block:
+        - name: Restart systemd-resolved
+          ansible.builtin.systemd_service:
+            name: systemd-resolved
+            state: restarted
+
+        - name: Read the resolved drop-in after restart
+          ansible.builtin.slurp:
+            src: "{{ tailscale_dns_resolved_dropin_path }}"
+          register: _tailscale_dns_dropin_after_restart
+
+        - name: Inspect active global DNS after restart
+          ansible.builtin.command:
+            argv:
+              - resolvectl
+              - dns
+          register: _tailscale_dns_active_dns_after_restart
+          changed_when: false
+
+        - name: Inspect active global domains after restart
+          ansible.builtin.command:
+            argv:
+              - resolvectl
+              - domain
+          register: _tailscale_dns_active_domains_after_restart
+          changed_when: false
+
+        - name: Assert the resolved drop-in survived restart
+          ansible.builtin.assert:
+            that:
+              - _tailscale_dns_dropin_after_restart.content == _tailscale_dns_dropin_before_restart.content
+              - "'192.0.2.53' in _tailscale_dns_active_dns_after_restart.stdout"
+              - "'example.test' in _tailscale_dns_active_domains_after_restart.stdout"
+            quiet: true
+
+    - name: Reapply inferred configuration without replacing its drop-in
+      ansible.builtin.include_role:
+        name: tailscale_dns
+
+    - name: Read the inferred drop-in after a later run
+      ansible.builtin.slurp:
+        src: "{{ tailscale_dns_resolved_dropin_path }}"
+      register: _tailscale_dns_dropin_after_inferred_run
+
+    - name: Assert inferred drop-in state is preserved
+      ansible.builtin.assert:
+        that:
+          - _tailscale_dns_dropin_after_inferred_run.content == _tailscale_dns_dropin_before_restart.content
+        quiet: true
+
+    - name: Replace the role-owned drop-in with invalid section content
+      ansible.builtin.copy:
+        dest: "{{ tailscale_dns_resolved_dropin_path }}"
+        mode: "0644"
+        content: |
+          [Other]
+          DNS=192.0.2.55
+
+    - name: Reapply the role to repair the malformed drop-in
+      ansible.builtin.include_role:
+        name: tailscale_dns
+
+    - name: Read the repaired drop-in
+      ansible.builtin.slurp:
+        src: "{{ tailscale_dns_resolved_dropin_path }}"
+      register: _tailscale_dns_repaired_dropin
+
+    - name: Assert malformed role-owned drop-in was repaired
+      ansible.builtin.assert:
+        that:
+          - "'[Resolve]' in (_tailscale_dns_repaired_dropin.content | b64decode)"
+          - "'DNS=192.0.2.55' in (_tailscale_dns_repaired_dropin.content | b64decode)"
+        quiet: true
+
+    - name: Apply explicit bootstrap configuration
+      ansible.builtin.include_role:
+        name: tailscale_dns
+      vars:
+        tailscale_dns_bootstrap_nameservers:
+          - 192.0.2.54
+          - 100.100.100.100
+        tailscale_dns_bootstrap_search_domains:
+          - explicit.example.test
+          - tailnet.ts.net
+
+    - name: Read the explicitly managed drop-in
+      ansible.builtin.slurp:
+        src: "{{ tailscale_dns_resolved_dropin_path }}"
+      register: _tailscale_dns_explicit_dropin
+
+    - name: Assert explicit bootstrap values are filtered and persisted
+      ansible.builtin.assert:
+        that:
+          - "'DNS=192.0.2.54' in (_tailscale_dns_explicit_dropin.content | b64decode)"
+          - "'100.100.100.100' not in (_tailscale_dns_explicit_dropin.content | b64decode)"
+          - "'Domains=explicit.example.test' in (_tailscale_dns_explicit_dropin.content | b64decode)"
+          - "'tailnet.ts.net' not in (_tailscale_dns_explicit_dropin.content | b64decode)"
+        quiet: true
+
+    - name: Remove the role-owned drop-in to simulate configuration drift
+      ansible.builtin.file:
+        path: "{{ tailscale_dns_resolved_dropin_path }}"
+        state: absent
+
+    - name: Verify missing role-owned drop-in fails closed
+      block:
+        - name: Reapply role after deleting its managed drop-in
+          ansible.builtin.include_role:
+            name: tailscale_dns
+
+        - name: Record unexpected missing drop-in acceptance
+          ansible.builtin.set_fact:
+            _tailscale_dns_missing_dropin_rejected: false
+      rescue:
+        - name: Record missing drop-in rejection
+          ansible.builtin.set_fact:
+            _tailscale_dns_missing_dropin_rejected: true
+            _tailscale_dns_missing_dropin_failure: >-
+              {{ ansible_failed_result.msg | default('') }}
+
+    - name: Assert missing role-owned drop-in requires bootstrap DNS
+      ansible.builtin.assert:
+        that:
+          - _tailscale_dns_missing_dropin_rejected | default(false)
+          - "'tailscale_dns_bootstrap_nameservers' in _tailscale_dns_missing_dropin_failure"
+        quiet: true
+
+    - name: Read immutable fixture support marker
+      ansible.builtin.slurp:
+        src: /run/tailscale-dns-test-immutable-supported
+      register: _tailscale_dns_immutable_supported
+
+    - name: Check immutable flag was cleared when supported
+      ansible.builtin.command:
+        argv:
+          - lsattr
+          - -d
+          - "{{ tailscale_dns_resolv_conf_path }}"
+      register: _tailscale_dns_resolv_conf_attributes
+      changed_when: false
+      when: >-
+        (_tailscale_dns_immutable_supported.content | b64decode | trim) == 'true'
+
+    - name: Verify first installation rejects unsafe bootstrap resolvers
+      block:
+        - name: Apply role with an unsafe resolver fixture
+          ansible.builtin.include_role:
+            name: tailscale_dns
+          vars:
+            tailscale_dns_resolved_package: molecule-tailscale-dns-not-installed
+            tailscale_dns_resolv_conf_path: /etc/tailscale-dns-test/unsafe-resolv.conf
+            tailscale_dns_resolv_conf_target: /etc/tailscale-dns-test/stub-resolv.conf
+            tailscale_dns_tailscaled_service: systemd-resolved
+            tailscale_dns_resolved_dropin_path: /etc/systemd/resolved.conf.d/tailscale-dns.conf
+
+        - name: Record unexpected unsafe resolver acceptance
+          ansible.builtin.set_fact:
+            _tailscale_dns_unsafe_bootstrap_rejected: false
+      rescue:
+        - name: Record unsafe resolver rejection
+          ansible.builtin.set_fact:
+            _tailscale_dns_unsafe_bootstrap_rejected: true
+            _tailscale_dns_unsafe_bootstrap_failure: >-
+              {{ ansible_failed_result.msg | default('') }}
+
+    - name: Assert first installation fails without a safe bootstrap resolver
+      ansible.builtin.assert:
+        that:
+          - _tailscale_dns_unsafe_bootstrap_rejected | default(false)
+          - "'tailscale_dns_bootstrap_nameservers' in _tailscale_dns_unsafe_bootstrap_failure"
+        quiet: true
+
+    - name: Verify installed but unused resolved package still requires migration DNS
+      block:
+        - name: Apply role to an unsafe resolver path with resolved installed
+          ansible.builtin.include_role:
+            name: tailscale_dns
+          vars:
+            tailscale_dns_resolv_conf_path: /etc/tailscale-dns-test/unsafe-resolv.conf
+
+        - name: Record unexpected migration acceptance
+          ansible.builtin.set_fact:
+            _tailscale_dns_unused_package_migration_rejected: false
+      rescue:
+        - name: Record migration rejection for installed but unused resolved
+          ansible.builtin.set_fact:
+            _tailscale_dns_unused_package_migration_rejected: true
+            _tailscale_dns_unused_package_failure: >-
+              {{ ansible_failed_result.msg | default('') }}
+
+    - name: Assert installed but unused resolved package fails closed
+      ansible.builtin.assert:
+        that:
+          - _tailscale_dns_unused_package_migration_rejected | default(false)
+          - "'tailscale_dns_bootstrap_nameservers' in _tailscale_dns_unused_package_failure"
+        quiet: true
+
+    - name: Assert immutable flag is absent when the fixture was supported
+      ansible.builtin.assert:
+        that:
+          - "'i' not in _tailscale_dns_resolv_conf_attributes.stdout.split()[0]"
+        quiet: true
+      when: >-
+        (_tailscale_dns_immutable_supported.content | b64decode | trim) == 'true'

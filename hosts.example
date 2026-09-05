@@ -11,6 +11,12 @@ edge-01
 pve
 vps
 
+[tailscale]
+tailscale-01
+
+[tailscale:children]
+machines
+
 [backup]
 edge-01
 backup-01

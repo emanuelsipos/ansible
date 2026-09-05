@@ -1,0 +1,9 @@
+---
+- name: Converge
+  hosts: all
+  vars:
+    tailscale_dns_resolv_conf_path: /etc/tailscale-dns-test/resolv.conf
+    tailscale_dns_resolv_conf_target: /etc/tailscale-dns-test/stub-resolv.conf
+    tailscale_dns_tailscaled_service: systemd-resolved
+  roles:
+    - role: tailscale_dns

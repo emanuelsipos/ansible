@@ -1,10 +1,14 @@
 ---
 - name: Install and configure Tailscale
-  hosts: machines
+  hosts: tailscale
   tags: [tailscale]
   vars_files:
     - ../../vars/tailscale.yml
 
   roles:
     - role: artis3n.tailscale.machine
+      tags: [tailscale]
+
+    - role: tailscale_dns
+      when: "'pve' not in group_names"
       tags: [tailscale]

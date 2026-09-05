@@ -11,7 +11,8 @@ Production inventory and credentials are managed in Semaphore and are not stored
   staggered PVE ZFS scrubs, and explicit PVE ZFS snapshot retention
 - `beszel`: Beszel agent installation and configuration
 - `komodo`: Komodo periphery and server configuration
-- `tailscale`: Tailscale installation and enrollment
+- `tailscale`: Tailscale installation and enrollment, with systemd-resolved DNS
+  integration on non-PVE Debian-family hosts
 - `pve-maintenance`: single-node, report-first PVE `apt-get dist-upgrade`
   maintenance; see its [runbook](playbooks/pve-maintenance/README.md)
 
@@ -114,6 +115,22 @@ uv pip compile \
 ```
 
 ## Networking
+
+The `tailscale` play targets the dedicated `tailscale` group. On non-PVE
+Debian-family systemd hosts, it enrolls Tailscale, then configures
+`systemd-resolved` with a persistent drop-in and links `/etc/resolv.conf` to the
+local stub resolver. During migration, the role preserves safe upstream DNS and
+search domains from the current resolver configuration in
+`/etc/systemd/resolved.conf.d/tailscale-dns.conf`, excluding local and Tailscale
+resolver addresses and Tailscale search domains. Inferred drop-ins are preserved
+on later runs; define
+`tailscale_dns_bootstrap_nameservers` with IPv4 resolver addresses and optionally
+`tailscale_dns_bootstrap_search_domains` to explicitly manage their values.
+When no safe upstream resolver is present for migration or drop-in creation,
+the role fails closed and instructs you to set
+`tailscale_dns_bootstrap_nameservers`. Debian's existing `isc-dhcp-client`
+systemd-resolved enter/exit hooks continue to update lease DNS data, so the play
+does not restart networking or renew DHCP.
 
 For Komodo hosts, IPv6 forwarding configures the first available interface in
 this order: `komodo_ipv6_interface`, Ansible's default IPv6 interface, then its

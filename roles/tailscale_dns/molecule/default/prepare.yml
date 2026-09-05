@@ -1,0 +1,57 @@
+---
+- name: Prepare Tailscale DNS fixture
+  hosts: all
+  tasks:
+    - name: Remove systemd-resolved for the first-install fixture
+      ansible.builtin.package:
+        name: systemd-resolved
+        state: absent
+
+    - name: Create Tailscale DNS fixture directory
+      ansible.builtin.file:
+        path: /etc/tailscale-dns-test
+        state: directory
+        mode: "0755"
+
+    - name: Create Tailscale DNS stub resolver fixture
+      ansible.builtin.copy:
+        dest: /etc/tailscale-dns-test/stub-resolv.conf
+        mode: "0644"
+        content: |
+          nameserver 127.0.0.53
+
+    - name: Create mutable resolver fixture
+      ansible.builtin.copy:
+        dest: /etc/tailscale-dns-test/resolv.conf
+        mode: "0644"
+        content: |
+          search example.test tailnet.ts.net
+          nameserver 127.0.0.53
+          nameserver 100.100.100.100
+          nameserver 192.0.2.53
+
+    - name: Create unsafe resolver fixture
+      ansible.builtin.copy:
+        dest: /etc/tailscale-dns-test/unsafe-resolv.conf
+        mode: "0644"
+        content: |
+          search tailnet.ts.net
+          nameserver 127.0.0.53
+          nameserver 100.100.100.100
+          nameserver fd7a:115c:a1e0::53
+
+    - name: Make resolver fixture immutable when the filesystem supports it
+      ansible.builtin.command:
+        argv:
+          - chattr
+          - +i
+          - /etc/tailscale-dns-test/resolv.conf
+      register: _tailscale_dns_immutable_fixture
+      changed_when: _tailscale_dns_immutable_fixture.rc == 0
+      failed_when: false
+
+    - name: Record immutable fixture support
+      ansible.builtin.copy:
+        dest: /run/tailscale-dns-test-immutable-supported
+        mode: "0644"
+        content: "{{ 'true' if _tailscale_dns_immutable_fixture.rc == 0 else 'false' }}\n"
