@@ -2,9 +2,10 @@
 # artis3n.tailscale configuration
 # https://github.com/artis3n/ansible-role-tailscale
 
-# Auth key for joining the tailnet. The pinned role requires it on every normal
-# run, including hosts that are already enrolled. Set tailscale_up_skip to true
-# only for runs that intentionally skip `tailscale up`.
+# Auth key for the first `tailscale up`. Tailscale is still installed and
+# configured when the key is absent, but authentication is skipped. The pinned
+# role keeps enrolled hosts running and only runs `tailscale up` when its state
+# or desired arguments require it.
 # Generate a reusable/ephemeral auth key at https://login.tailscale.com/admin/settings/keys
 # and add it to the Semaphore project variable group as the secret environment
 # variable `TAILSCALE_AUTHKEY`. Do not store the key in this repository.
@@ -13,9 +14,17 @@ tailscale_authkey: >-
     lookup(
       'ansible.builtin.env',
       'TAILSCALE_AUTHKEY',
-      default=undef()
+      default=''
     )
+    | trim
   }}
+
+# The third-party role installs and starts Tailscale even when `tailscale_up` is
+# skipped, so a missing key does not prevent the rest of the play from running.
+tailscale_up_skip: "{{ tailscale_authkey | length == 0 }}"
+
+# Do not make auth-key presence or rotation alone trigger another `tailscale up`.
+auth_key_in_state: false
 
 # Additional tailscale up arguments (e.g. "--advertise-exit-node", "--ssh")
 # Use "--force-reauth" here only for deliberate reauthentication.

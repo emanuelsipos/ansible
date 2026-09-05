@@ -39,6 +39,11 @@ Attach one variable group to the templates that run these playbooks.
 | `pve_host_backup_encryption_key` | Secrets → Extra variables or inventory | `all-hosts` |
 | `pve_host_backup_encryption_passphrase` | Secrets → Extra variables or inventory | `all-hosts` |
 
+`TAILSCALE_AUTHKEY` is optional. The `tailscale` play still installs, starts,
+and configures Tailscale when it is absent, but skips the initial `tailscale up`.
+On already-enrolled hosts, this keeps the existing node running without
+requiring the auth key on every run.
+
 Production inventory is stored in Semaphore. The inventory must provide the
 groups shown in [`hosts.example`](hosts.example); templates may limit runs to a
 smaller host or group. It must also define `ansible_user` as an inventory
