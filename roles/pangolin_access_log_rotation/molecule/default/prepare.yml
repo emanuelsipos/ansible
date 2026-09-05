@@ -1,0 +1,7 @@
+---
+- name: Prepare
+  hosts: all
+  tasks:
+    - name: Refresh APT package metadata
+      ansible.builtin.apt:
+        update_cache: true
