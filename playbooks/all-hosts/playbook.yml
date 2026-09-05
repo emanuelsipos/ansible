@@ -76,6 +76,10 @@
           live-restore: true
           storage-driver: "overlay2"
           ipv6: true
+          log-driver: "json-file"
+          log-opts:
+            max-size: "10m"
+            max-file: "3"
     - role: sysctl
       tags: [networking, sysctl]
       vars:
