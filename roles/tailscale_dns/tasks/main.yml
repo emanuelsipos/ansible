@@ -299,6 +299,15 @@
   when:
     - (_tailscale_dns_dropin_needed | bool) or (_tailscale_dns_resolved_dropin.stat.exists | default(false))
 
+- name: Stop tailscaled before changing resolver ownership
+  ansible.builtin.systemd_service:
+    name: "{{ tailscale_dns_tailscaled_service }}"
+    state: stopped
+  when:
+    - not ansible_check_mode
+    - tailscale_dns_restart_tailscaled | bool
+    - _tailscale_dns_migration_needed | bool
+
 - name: Restart systemd-resolved before changing the resolver symlink
   ansible.builtin.meta: flush_handlers
 
@@ -310,7 +319,12 @@
     src: "{{ tailscale_dns_resolv_conf_target }}"
     state: link
     force: true
-  notify: Restart tailscaled
 
-- name: Restart tailscaled after switching the resolver symlink
-  ansible.builtin.meta: flush_handlers
+- name: Start tailscaled after changing resolver ownership
+  ansible.builtin.systemd_service:
+    name: "{{ tailscale_dns_tailscaled_service }}"
+    state: started
+  when:
+    - not ansible_check_mode
+    - tailscale_dns_restart_tailscaled | bool
+    - _tailscale_dns_migration_needed | bool

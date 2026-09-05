@@ -3,9 +3,3 @@
   ansible.builtin.systemd_service:
     name: "{{ tailscale_dns_resolved_service }}"
     state: restarted
-
-- name: Restart tailscaled
-  ansible.builtin.systemd_service:
-    name: "{{ tailscale_dns_tailscaled_service }}"
-    state: restarted
-  when: tailscale_dns_restart_tailscaled | bool

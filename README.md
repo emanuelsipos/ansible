@@ -136,6 +136,8 @@ resolver addresses and Tailscale search domains. Inferred drop-ins are preserved
 on later runs; define
 `tailscale_dns_bootstrap_nameservers` with IPv4 resolver addresses and optionally
 `tailscale_dns_bootstrap_search_domains` to explicitly manage their values.
+During a resolver migration, the role stops `tailscaled` before changing
+`/etc/resolv.conf` and starts it after the systemd-resolved stub is active.
 When no safe upstream resolver is present for migration or drop-in creation,
 the role fails closed and instructs you to set
 `tailscale_dns_bootstrap_nameservers`. Debian's existing `isc-dhcp-client`
