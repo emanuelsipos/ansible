@@ -30,6 +30,8 @@
 
     - role: tailscale_dns
       vars:
-        tailscale_dns_restart_tailscaled: "{{ not ansible_check_mode }}"
+        # Stopping tailscaled would tear down SSH when this host is reached
+        # over Tailscale before the resolver symlink can be updated.
+        tailscale_dns_restart_tailscaled: false
       when: "'pve' not in group_names"
       tags: [tailscale]
