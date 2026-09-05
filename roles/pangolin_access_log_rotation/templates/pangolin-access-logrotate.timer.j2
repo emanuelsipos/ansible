@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Pangolin Traefik access-log size hourly
+
+[Timer]
+OnCalendar={{ pangolin_access_log_rotation_calendar }}
+Persistent=true
+RandomizedDelaySec={{ pangolin_access_log_rotation_randomized_delay }}
+Unit=pangolin-access-logrotate.service
+
+[Install]
+WantedBy=timers.target

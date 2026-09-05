@@ -1,0 +1,14 @@
+[Unit]
+Description=Rotate Pangolin Traefik access log
+ConditionPathExists=/opt/docker/pangolin/traefik/logs/access.log
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/logrotate --state /var/lib/logrotate/pangolin-access-log.status /etc/pangolin-access-logrotate.conf
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=-/opt/docker/pangolin/traefik/logs /var/lib/logrotate
+RestrictAddressFamilies=AF_UNIX

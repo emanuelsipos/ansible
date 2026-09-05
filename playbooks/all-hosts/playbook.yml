@@ -80,6 +80,8 @@
           log-opts:
             max-size: "10m"
             max-file: "3"
+    - role: pangolin_access_log_rotation
+      tags: [docker, pangolin, logrotate]
     - role: sysctl
       tags: [networking, sysctl]
       vars:

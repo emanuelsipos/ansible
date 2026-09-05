@@ -1,0 +1,24 @@
+---
+- name: Verify
+  hosts: all
+  tasks:
+    - name: Read Pangolin logrotate configuration
+      ansible.builtin.slurp:
+        src: /etc/pangolin-access-logrotate.conf
+      register: pangolin_access_log_rotation_config
+
+    - name: Inspect Pangolin access-log rotation timer
+      ansible.builtin.systemd_service:
+        name: pangolin-access-logrotate.timer
+      register: pangolin_access_log_rotation_timer
+
+    - name: Verify Pangolin access-log rotation policy
+      ansible.builtin.assert:
+        that:
+          - >-
+            'size 100M' in
+            (pangolin_access_log_rotation_config.content | b64decode)
+          - >-
+            'docker kill --signal=USR1 traefik' in
+            (pangolin_access_log_rotation_config.content | b64decode)
+          - pangolin_access_log_rotation_timer.status.UnitFileState == 'enabled'

@@ -1,0 +1,17 @@
+/opt/docker/pangolin/traefik/logs/access.log {
+    size {{ pangolin_access_log_rotation_size }}
+    rotate {{ pangolin_access_log_rotation_count }}
+    maxage {{ pangolin_access_log_rotation_max_age }}
+    missingok
+    notifempty
+    compress
+    dateext
+    dateformat -%Y%m%dT%H%M%S
+    create 0640 root root
+    sharedscripts
+    postrotate
+        if /usr/bin/docker container inspect traefik >/dev/null 2>&1; then
+            /usr/bin/docker kill --signal=USR1 traefik >/dev/null
+        fi
+    endscript
+}

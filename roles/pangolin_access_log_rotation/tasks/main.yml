@@ -1,0 +1,60 @@
+---
+- name: Validate Pangolin access-log rotation settings
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+      - pangolin_access_log_rotation_size is match('^[1-9][0-9]*[KMG]$')
+      - pangolin_access_log_rotation_count | int >= 1
+      - pangolin_access_log_rotation_max_age | int >= 1
+      - pangolin_access_log_rotation_calendar | length > 0
+      - pangolin_access_log_rotation_randomized_delay | length > 0
+    quiet: true
+    fail_msg: Invalid Pangolin access-log rotation settings
+  tags: [docker, pangolin, logrotate]
+
+- name: Install logrotate
+  ansible.builtin.apt:
+    name: logrotate
+    state: present
+    update_cache: false
+  tags: [docker, pangolin, logrotate]
+
+- name: Install Pangolin access-log rotation configuration
+  ansible.builtin.template:
+    src: pangolin-access-logrotate.conf.j2
+    dest: /etc/pangolin-access-logrotate.conf
+    owner: root
+    group: root
+    mode: "0644"
+  tags: [docker, pangolin, logrotate]
+
+- name: Install Pangolin access-log rotation service
+  ansible.builtin.template:
+    src: pangolin-access-logrotate.service.j2
+    dest: /etc/systemd/system/pangolin-access-logrotate.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for Pangolin access-log rotation
+  tags: [docker, pangolin, logrotate]
+
+- name: Install Pangolin access-log rotation timer
+  ansible.builtin.template:
+    src: pangolin-access-logrotate.timer.j2
+    dest: /etc/systemd/system/pangolin-access-logrotate.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for Pangolin access-log rotation
+  tags: [docker, pangolin, logrotate]
+
+- name: Apply Pangolin access-log rotation units
+  ansible.builtin.meta: flush_handlers
+  tags: [docker, pangolin, logrotate]
+
+- name: Enable Pangolin access-log rotation timer
+  ansible.builtin.systemd_service:
+    name: pangolin-access-logrotate.timer
+    enabled: true
+    state: started
+  tags: [docker, pangolin, logrotate]

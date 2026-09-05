@@ -27,6 +27,7 @@ jobs:
           - apt_archive_policy
           - github_release_download
           - journald_retention
+          - pangolin_access_log_rotation
           - pve_host_backup
           - pve_maintenance
           - pve_peer_reboot

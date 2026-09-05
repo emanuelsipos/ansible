@@ -1,0 +1,6 @@
+---
+pangolin_access_log_rotation_size: "100M"
+pangolin_access_log_rotation_count: 7
+pangolin_access_log_rotation_max_age: 14
+pangolin_access_log_rotation_calendar: hourly
+pangolin_access_log_rotation_randomized_delay: 5m
