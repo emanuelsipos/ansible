@@ -109,6 +109,7 @@ pve_zfs_snapshot_policy_host_datasets:
     data3/appdata/languagetool/ngrams: disabled
     data3/appdata/plex: disabled
     data3/appdata/plex/media: disabled
+    data3/appdata/plex/metadata: app
     data3/proxmox: disabled
     data3/proxmox-backup-server: disabled
     data3/userdata: disabled
