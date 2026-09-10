@@ -5,6 +5,8 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+  schedule:
+    - cron: "30 4 * * *" # Daily; keeps the 1-day Healthchecks timeout meaningful.
   workflow_dispatch:
 
 permissions:
@@ -51,13 +53,19 @@ jobs:
         with:
           setup_python: "false"
       - name: Ping healthchecks
-        if: success() || failure()  # not on cancellation
+        if: >-
+          (success() || failure()) &&
+          (github.event_name == 'push' || github.event_name == 'schedule' ||
+          github.event_name == 'workflow_dispatch')
         env:
           HC_URL: ${{ secrets.HC_ANSIBLE_LINT }}
         run: |
-          [ -z "$HC_URL" ] && exit 0
+          if [ -z "$HC_URL" ]; then
+            echo "::error::HC_ANSIBLE_LINT is not configured; refusing to report a false heartbeat."
+            exit 1
+          fi
           if [ "${{ job.status }}" = "success" ]; then
-            curl -fsS --retry 3 "$HC_URL" > /dev/null || true
+            curl -fsS --retry 3 "$HC_URL" > /dev/null
           else
-            curl -fsS --retry 3 "${HC_URL}/fail" > /dev/null || true
+            curl -fsS --retry 3 "${HC_URL}/fail" > /dev/null
           fi
