@@ -1,0 +1,12 @@
+# Managed by Ansible role pve_zfs_snapshot_policy.
+[Unit]
+Description=Prune aged managed ZFS snapshots on a quiet schedule
+
+[Timer]
+OnCalendar={{ pve_zfs_snapshot_policy_prune_calendar }}
+Persistent=false
+RandomizedDelaySec={{ pve_zfs_snapshot_policy_prune_randomized_delay }}
+Unit={{ pve_zfs_snapshot_policy_prune_service }}
+
+[Install]
+WantedBy=timers.target

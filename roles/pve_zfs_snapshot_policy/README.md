@@ -59,9 +59,9 @@ pve_zfs_snapshot_policy_host_activation:
 ```
 
 Do not add another host until its report and short creation-only stage have been
-reviewed. The prune schedule is used only where local pruning is enabled. Run it
-after every frequent creation interval so tier keep counts remain bounded; use
-different minutes from every creation tier to avoid routine overlap.
+reviewed. The prune calendar is used only where local pruning is enabled. It is
+implemented as a non-persistent systemd timer so a reboot does not launch a
+catch-up cleanup alongside guest startup, backups, or scrubs.
 
 An immediate cleanup additionally requires local pruning to be enabled and:
 
@@ -74,15 +74,20 @@ recognizes only snapshots named
 `zfs-auto-snap_<configured-tier>-...`. Proxmox `__base__` and `__replicate_*`
 snapshots, plus manually named snapshots, are outside that namespace and remain
 untouched. It never uses recursive or forced destruction. Held, cloned, or
-otherwise undeletable snapshots are reported as failures. Before any deletion,
-it identifies candidate pools with an active or paused scrub/resilver and skips
-their candidates, then dry-runs every candidate on idle pools with
-`zfs destroy -n`. A preflight blocker prevents all deletions selected for that
-run. It holds the automatic scrub launcher's lock from scan inspection through
-deletion, preventing a new managed scrub from starting during the operation. It
-stops at the first actual destroy failure. `--preflight` performs the same checks
-without deletion, and `--expect-manifest-sha256` can bind a manual operation to
-the candidate-name digest printed by the helper. A false tier keeps zero
+otherwise undeletable snapshots are reported as per-snapshot skips. Before any
+deletion, it identifies candidate pools with an active or paused scrub/resilver
+and skips their candidates. Scheduled execution deletes at most
+`pve_zfs_snapshot_policy_prune_max_candidates` candidates per run and continues
+past expected busy, held, cloned, or already-missing snapshots. Unexpected
+destruction errors remain visible through a nonzero service result. The helper
+holds the automatic scrub launcher's lock from scan inspection through deletion,
+preventing a new managed scrub from starting during the operation.
+
+`--preflight` performs bounded dry-run checks without deletion, and
+`--expect-manifest-sha256` can bind a manual operation to the candidate-name
+digest printed by the helper. Use `--max-candidates` explicitly for a larger
+supervised catch-up. The scheduled service writes concise counters to the
+systemd journal instead of generating cron mail. A false tier keeps zero
 automatic snapshots for that tier once pruning is explicitly enabled.
 
 Direct `zpool scrub` commands do not participate in this advisory lock. Do not

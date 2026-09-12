@@ -1,0 +1,22 @@
+# Managed by Ansible role pve_zfs_snapshot_policy.
+[Unit]
+Description=Prune aged managed ZFS snapshots
+After=pve-cluster.service zfs.target
+
+[Service]
+Type=oneshot
+ExecStart={{ pve_zfs_snapshot_policy_prune_helper }} --execute --max-candidates={{ pve_zfs_snapshot_policy_prune_max_candidates }}
+TimeoutStartSec={{ pve_zfs_snapshot_policy_prune_timeout_start_sec }}
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+User=root
+Group=root
+UMask=0077
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=-/run/lock
+StandardOutput=journal
+StandardError=journal

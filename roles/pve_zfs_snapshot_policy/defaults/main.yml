@@ -20,7 +20,12 @@ pve_zfs_snapshot_policy_package_cron_files:
 pve_zfs_snapshot_policy_prune_helper: /usr/local/sbin/pve-zfs-snapshot-prune
 pve_zfs_snapshot_policy_prune_lock_file: /run/lock/pve-zfs-snapshot-prune.lock
 pve_zfs_snapshot_policy_scan_lock_file: /run/lock/pve-zfs-scrub.lock
-pve_zfs_snapshot_policy_prune_schedule: ""
+pve_zfs_snapshot_policy_prune_service: pve-zfs-snapshot-prune.service
+pve_zfs_snapshot_policy_prune_timer: pve-zfs-snapshot-prune.timer
+pve_zfs_snapshot_policy_prune_calendar: ""
+pve_zfs_snapshot_policy_prune_randomized_delay: 10min
+pve_zfs_snapshot_policy_prune_timeout_start_sec: 10min
+pve_zfs_snapshot_policy_prune_max_candidates: 256
 pve_zfs_snapshot_policy_host_activation: {}
 pve_zfs_snapshot_policy_prune_now: false
 pve_zfs_snapshot_policy_report_prune_candidates: true

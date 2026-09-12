@@ -160,9 +160,19 @@
                           exit 1
                       fi
                       exit 0
-                  fi
-                  snapshot=${2:?snapshot is required}
-                  printf '%s\n' "$snapshot" >>"$STATE/destroyed"
+               fi
+               snapshot=${2:?snapshot is required}
+               if [[ -e "$STATE/busy_snapshot" &&
+                   "$snapshot" == "$(<"$STATE/busy_snapshot")" ]]; then
+                   printf 'cannot destroy snapshot %s: dataset is busy\n' "$snapshot" >&2
+                   exit 1
+               fi
+               if [[ -e "$STATE/unexpected_failure" &&
+                   "$snapshot" == "$(<"$STATE/unexpected_failure")" ]]; then
+                   printf 'mock unexpected destroy failure: %s\n' "$snapshot" >&2
+                   exit 1
+               fi
+               printf '%s\n' "$snapshot" >>"$STATE/destroyed"
                   awk -v wanted="$snapshot" '$1 != wanted' \
                       "$STATE/snapshots" >"$STATE/snapshots.next"
                   mv "$STATE/snapshots.next" "$STATE/snapshots"

@@ -35,7 +35,10 @@
         data3/karakeep: app
         data3/proxmox: disabled
         data3/proxmox-backup-server: disabled
-    pve_zfs_snapshot_policy_prune_schedule: "7,22,37,56 * * * *"
+    pve_zfs_snapshot_policy_prune_calendar: "*-*-* 06:30:00"
+    pve_zfs_snapshot_policy_prune_randomized_delay: 10min
+    pve_zfs_snapshot_policy_prune_timeout_start_sec: 10min
+    pve_zfs_snapshot_policy_prune_max_candidates: 2
   tasks:
     - name: Read explicit automatic snapshot cron policy
       ansible.builtin.slurp:
@@ -56,11 +59,7 @@
             is search('--skip-scrub')
           - >-
             (pve_zfs_snapshot_policy_cron.content | b64decode)
-            is search('pve-zfs-snapshot-prune --execute')
-          - >-
-            (pve_zfs_snapshot_policy_cron.content | b64decode)
-            is search('7,22,37,56 \* \* \* \* root '
-            '.*pve-zfs-snapshot-prune --execute')
+            is not search('pve-zfs-snapshot-prune')
       when: inventory_hostname == 'io'
 
     - name: Verify europa starts inactive
@@ -87,6 +86,51 @@
           - >-
             (pve_zfs_snapshot_policy_cron.content | b64decode)
             is not search('pve-zfs-snapshot-prune --execute')
+      when: inventory_hostname == 'europa'
+
+    - name: Read io prune systemd units
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      loop:
+        - /etc/systemd/system/pve-zfs-snapshot-prune.service
+        - /etc/systemd/system/pve-zfs-snapshot-prune.timer
+      register: pve_zfs_snapshot_policy_units
+      when: inventory_hostname == 'io'
+
+    - name: Verify bounded prune systemd units
+      ansible.builtin.assert:
+        that:
+          - >-
+            pve_zfs_snapshot_policy_units.results[0].content | b64decode
+            is search('--max-candidates=2')
+          - >-
+            pve_zfs_snapshot_policy_units.results[0].content | b64decode
+            is search('TimeoutStartSec=10min')
+          - >-
+            pve_zfs_snapshot_policy_units.results[0].content | b64decode
+            is search('StandardOutput=journal')
+          - >-
+            pve_zfs_snapshot_policy_units.results[1].content | b64decode
+            is search('OnCalendar=\*-\*-\* 06:30:00')
+          - >-
+            pve_zfs_snapshot_policy_units.results[1].content | b64decode
+            is search('Persistent=false')
+      when: inventory_hostname == 'io'
+
+    - name: Verify europa has no prune systemd units
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/systemd/system/pve-zfs-snapshot-prune.service
+        - /etc/systemd/system/pve-zfs-snapshot-prune.timer
+      register: pve_zfs_snapshot_policy_europa_units
+      when: inventory_hostname == 'europa'
+
+    - name: Assert europa has no prune systemd units
+      ansible.builtin.assert:
+        that:
+          - not item.stat.exists
+      loop: "{{ pve_zfs_snapshot_policy_europa_units.results }}"
       when: inventory_hostname == 'europa'
 
     - name: Inspect package automatic snapshot cron diversions
@@ -289,6 +333,7 @@
             creation_enabled: true
             prune_enabled: true
         pve_zfs_snapshot_policy_prune_now: true
+        pve_zfs_snapshot_policy_prune_max_candidates: 100
       when: inventory_hostname == 'io'
 
     - name: Read explicitly destroyed automatic snapshots
@@ -308,7 +353,7 @@
         that:
           - >-
             (pve_zfs_snapshot_policy_prune_cron.content | b64decode)
-            is search('pve-zfs-snapshot-prune --execute')
+            is not search('pve-zfs-snapshot-prune')
           - >-
             (pve_zfs_snapshot_policy_prune_cron.content | b64decode)
             is search('--label=frequent')
@@ -526,11 +571,11 @@
         content: rpool/data/subvol-100-disk-0@zfs-auto-snap_daily-preflight-blocked
       when: inventory_hostname == 'io'
 
-    - name: Run prune with a blocked preflight
+    - name: Run preflight with a blocked candidate
       ansible.builtin.command:
         argv:
           - /usr/local/sbin/pve-zfs-snapshot-prune
-          - --execute
+          - --preflight
       register: pve_zfs_snapshot_policy_preflight_failure
       changed_when: false
       failed_when: false
@@ -562,4 +607,134 @@
             pve_zfs_snapshot_policy_preflight_log.content | b64decode
             is search('zfs-auto-snap_daily-preflight-blocked')
           - not pve_zfs_snapshot_policy_preflight_destroy_log.stat.exists
+      when: inventory_hostname == 'io'
+
+    - name: Clear mock preflight blocker
+      ansible.builtin.file:
+        path: /run/pve-zfs-snapshot-policy-test/preflight_blocker
+        state: absent
+      when: inventory_hostname == 'io'
+
+    - name: Execute one bounded prune candidate
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-zfs-snapshot-prune
+          - --execute
+          - --max-candidates
+          - "1"
+      register: pve_zfs_snapshot_policy_bounded_result
+      changed_when: false
+      when: inventory_hostname == 'io'
+
+    - name: Verify candidate work is bounded
+      ansible.builtin.assert:
+        that:
+          - pve_zfs_snapshot_policy_bounded_result.rc == 0
+          - >-
+            pve_zfs_snapshot_policy_bounded_result.stdout
+            is search('selected_candidate_count=1')
+          - >-
+            pve_zfs_snapshot_policy_bounded_result.stdout
+            is search('deferred_candidate_count=1')
+          - >-
+            pve_zfs_snapshot_policy_bounded_result.stdout
+            is search('destroyed_count=1')
+      when: inventory_hostname == 'io'
+
+    - name: Add expected busy-failure fixtures
+      ansible.builtin.lineinfile:
+        path: /run/pve-zfs-snapshot-policy-test/snapshots
+        line: "{{ item }}"
+      loop:
+        - rpool/data/subvol-100-disk-0@zfs-auto-snap_daily-busy 1000
+        - rpool/data/subvol-100-disk-0@zfs-auto-snap_daily-safe 1001
+      when: inventory_hostname == 'io'
+
+    - name: Configure expected busy fixture
+      ansible.builtin.copy:
+        dest: /run/pve-zfs-snapshot-policy-test/busy_snapshot
+        owner: root
+        group: root
+        mode: "0600"
+        content: rpool/data/subvol-100-disk-0@zfs-auto-snap_daily-busy
+      when: inventory_hostname == 'io'
+
+    - name: Execute prune with an expected busy snapshot
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-zfs-snapshot-prune
+          - --execute
+          - --max-candidates
+          - "100"
+      register: pve_zfs_snapshot_policy_busy_result
+      changed_when: false
+      when: inventory_hostname == 'io'
+
+    - name: Read destruction log after expected busy failure
+      ansible.builtin.slurp:
+        src: /run/pve-zfs-snapshot-policy-test/destroyed
+      register: pve_zfs_snapshot_policy_busy_destroy_log
+      when: inventory_hostname == 'io'
+
+    - name: Read snapshots after expected busy failure
+      ansible.builtin.slurp:
+        src: /run/pve-zfs-snapshot-policy-test/snapshots
+      register: pve_zfs_snapshot_policy_busy_remaining
+      when: inventory_hostname == 'io'
+
+    - name: Verify expected busy failure does not abort independent deletion
+      ansible.builtin.assert:
+        that:
+          - pve_zfs_snapshot_policy_busy_result.rc == 0
+          - >-
+            pve_zfs_snapshot_policy_busy_result.stdout
+            is search('skipped=.*daily-busy reason=dataset is busy')
+          - >-
+            pve_zfs_snapshot_policy_busy_destroy_log.content | b64decode
+            is search('daily-safe')
+          - >-
+            pve_zfs_snapshot_policy_busy_remaining.content | b64decode
+            is search('daily-busy')
+          - >-
+            pve_zfs_snapshot_policy_busy_remaining.content | b64decode
+            is not search('daily-safe')
+      when: inventory_hostname == 'io'
+
+    - name: Add unexpected failure fixture
+      ansible.builtin.lineinfile:
+        path: /run/pve-zfs-snapshot-policy-test/snapshots
+        line: rpool/data/subvol-100-disk-0@zfs-auto-snap_daily-unexpected 1002
+      when: inventory_hostname == 'io'
+
+    - name: Configure unexpected failure fixture
+      ansible.builtin.copy:
+        dest: /run/pve-zfs-snapshot-policy-test/unexpected_failure
+        owner: root
+        group: root
+        mode: "0600"
+        content: rpool/data/subvol-100-disk-0@zfs-auto-snap_daily-unexpected
+      when: inventory_hostname == 'io'
+
+    - name: Execute prune with an unexpected failure
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/pve-zfs-snapshot-prune
+          - --execute
+          - --max-candidates
+          - "100"
+      register: pve_zfs_snapshot_policy_unexpected_result
+      changed_when: false
+      failed_when: false
+      when: inventory_hostname == 'io'
+
+    - name: Verify unexpected failure is reported after independent processing
+      ansible.builtin.assert:
+        that:
+          - pve_zfs_snapshot_policy_unexpected_result.rc == 1
+          - >-
+            pve_zfs_snapshot_policy_unexpected_result.stderr
+            is search('failed=.*daily-unexpected')
+          - >-
+            pve_zfs_snapshot_policy_unexpected_result.stdout
+            is search('skipped_count=')
       when: inventory_hostname == 'io'

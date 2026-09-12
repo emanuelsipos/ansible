@@ -20,6 +20,14 @@
         is match('^/[A-Za-z0-9_./-]+$')
       - pve_zfs_snapshot_policy_prune_helper is match('^/[A-Za-z0-9_./-]+$')
       - pve_zfs_snapshot_policy_prune_lock_file is match('^/[A-Za-z0-9_./-]+$')
+      - pve_zfs_snapshot_policy_prune_service is match('^[A-Za-z0-9_.@-]+[.]service$')
+      - pve_zfs_snapshot_policy_prune_timer is match('^[A-Za-z0-9_.@-]+[.]timer$')
+      - pve_zfs_snapshot_policy_prune_calendar is string
+      - pve_zfs_snapshot_policy_prune_randomized_delay is string
+      - pve_zfs_snapshot_policy_prune_timeout_start_sec is string
+      - pve_zfs_snapshot_policy_prune_max_candidates is integer
+      - pve_zfs_snapshot_policy_prune_max_candidates > 0
+      - pve_zfs_snapshot_policy_prune_max_candidates <= 100000
       - >-
         pve_zfs_snapshot_policy_scan_lock_file ==
         '/run/lock/pve-zfs-scrub.lock'
@@ -156,11 +164,21 @@
           - inventory_hostname is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
           - >-
             not _pve_zfs_snapshot_policy_prune_enabled or
-            pve_zfs_snapshot_policy_prune_schedule
-            is match('^[0-9*/,-]+(?: [0-9*/,-]+){4}$')
-          - not pve_zfs_snapshot_policy_prune_schedule is search('[\r\n]')
+            pve_zfs_snapshot_policy_prune_calendar | length > 0
+          - not pve_zfs_snapshot_policy_prune_calendar is search('[\r\n]')
+          - not pve_zfs_snapshot_policy_prune_randomized_delay is search('[\r\n]')
+          - not pve_zfs_snapshot_policy_prune_timeout_start_sec is search('[\r\n]')
         quiet: true
         fail_msg: Local ZFS snapshot policy is incomplete or unsafe
+
+    - name: Validate automatic snapshot prune calendar with systemd
+      ansible.builtin.command:
+        argv:
+          - systemd-analyze
+          - calendar
+          - "{{ pve_zfs_snapshot_policy_prune_calendar }}"
+      when: _pve_zfs_snapshot_policy_prune_enabled
+      changed_when: false
 
     - name: Validate local ZFS dataset mappings
       ansible.builtin.assert:
@@ -323,6 +341,61 @@
         owner: root
         group: root
         mode: "0700"
+
+    - name: Install automatic snapshot prune service
+      ansible.builtin.template:
+        src: pve-zfs-snapshot-prune.service.j2
+        dest: "/etc/systemd/system/{{ pve_zfs_snapshot_policy_prune_service }}"
+        owner: root
+        group: root
+        mode: "0644"
+      when: _pve_zfs_snapshot_policy_prune_enabled
+      notify: Reload systemd for PVE ZFS snapshot policy
+
+    - name: Install automatic snapshot prune timer
+      ansible.builtin.template:
+        src: pve-zfs-snapshot-prune.timer.j2
+        dest: "/etc/systemd/system/{{ pve_zfs_snapshot_policy_prune_timer }}"
+        owner: root
+        group: root
+        mode: "0644"
+      when: _pve_zfs_snapshot_policy_prune_enabled
+      notify: Reload systemd for PVE ZFS snapshot policy
+
+    - name: Inspect disabled automatic snapshot prune timer
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/{{ pve_zfs_snapshot_policy_prune_timer }}"
+      register: _pve_zfs_snapshot_policy_disabled_timer
+      when: not _pve_zfs_snapshot_policy_prune_enabled
+
+    - name: Stop disabled automatic snapshot prune timer
+      ansible.builtin.systemd_service:
+        name: "{{ pve_zfs_snapshot_policy_prune_timer }}"
+        enabled: false
+        state: stopped
+      when:
+        - not _pve_zfs_snapshot_policy_prune_enabled
+        - _pve_zfs_snapshot_policy_disabled_timer.stat.exists
+
+    - name: Remove disabled automatic snapshot prune units
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop:
+        - "{{ pve_zfs_snapshot_policy_prune_service }}"
+        - "{{ pve_zfs_snapshot_policy_prune_timer }}"
+      when: not _pve_zfs_snapshot_policy_prune_enabled
+      notify: Reload systemd for PVE ZFS snapshot policy
+
+    - name: Apply automatic snapshot prune systemd unit changes
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start automatic snapshot prune timer
+      ansible.builtin.systemd_service:
+        name: "{{ pve_zfs_snapshot_policy_prune_timer }}"
+        enabled: true
+        state: started
+      when: _pve_zfs_snapshot_policy_prune_enabled
 
     - name: Install explicit automatic snapshot cron policy
       ansible.builtin.template:

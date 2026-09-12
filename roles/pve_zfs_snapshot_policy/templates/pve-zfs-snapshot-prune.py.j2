@@ -19,6 +19,17 @@ PREFIX = {{ pve_zfs_snapshot_policy_prefix | to_json }}
 REPORT_LIMIT = {{ pve_zfs_snapshot_policy_report_limit }}
 LOCK_FILE = {{ pve_zfs_snapshot_policy_prune_lock_file | to_json }}
 SCAN_LOCK_FILE = {{ pve_zfs_snapshot_policy_scan_lock_file | to_json }}
+DEFAULT_MAX_CANDIDATES = {{ pve_zfs_snapshot_policy_prune_max_candidates }}
+
+EXPECTED_FAILURES = (
+    "dataset is busy",
+    "snapshot is held",
+    "dataset is held",
+    "has dependent clones",
+    "snapshot has been cloned",
+    "does not exist",
+    "not found",
+)
 
 
 def profile_for(dataset):
@@ -103,12 +114,32 @@ def manifest_sha256(found):
     return hashlib.sha256(names.encode("utf-8")).hexdigest()
 
 
+def positive_int(value):
+    parsed = int(value)
+    if parsed < 1 or parsed > 100000:
+        raise argparse.ArgumentTypeError("must be between 1 and 100000")
+    return parsed
+
+
+def failure_reason(stderr):
+    message = stderr.strip().lower()
+    for expected in EXPECTED_FAILURES:
+        if expected in message:
+            return expected
+    return "unexpected"
+
+
 def main():
     parser = argparse.ArgumentParser()
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--execute", action="store_true")
     action.add_argument("--preflight", action="store_true")
     parser.add_argument("--expect-manifest-sha256")
+    parser.add_argument(
+        "--max-candidates",
+        type=positive_int,
+        default=DEFAULT_MAX_CANDIDATES,
+    )
     args = parser.parse_args()
 
     os.makedirs(os.path.dirname(LOCK_FILE), mode=0o755, exist_ok=True)
@@ -121,10 +152,11 @@ def main():
 
     found = candidates()
 
-    for _, snapshot, _ in found[:REPORT_LIMIT]:
-        print(f"candidate={snapshot}")
-    if len(found) > REPORT_LIMIT:
-        print(f"omitted_candidates={len(found) - REPORT_LIMIT}")
+    if not args.execute:
+        for _, snapshot, _ in found[:REPORT_LIMIT]:
+            print(f"candidate={snapshot}")
+        if len(found) > REPORT_LIMIT:
+            print(f"omitted_candidates={len(found) - REPORT_LIMIT}")
     print(f"candidate_count={len(found)}")
     print(f"candidate_manifest_sha256={manifest_sha256(found)}")
 
@@ -136,6 +168,7 @@ def main():
         raise SystemExit(1)
 
     destroyed = 0
+    skipped = 0
     failed = 0
     if args.execute or args.preflight:
         scan_lock = open(SCAN_LOCK_FILE, "w", encoding="ascii")  # noqa: SIM115
@@ -149,32 +182,33 @@ def main():
         for pool, reason, detail in blockers:
             print(f"skipped_pool={pool}:{reason}:{detail}")
         blocked_pools = {pool for pool, _, _ in blockers}
-        selected = [
+        eligible = [
             entry
             for entry in found
             if entry[1].split("@", 1)[0].split("/", 1)[0] not in blocked_pools
         ]
-        print(f"skipped_candidate_count={len(found) - len(selected)}")
-
-        for _, snapshot, _ in selected:
-            result = subprocess.run(
-                [ZFS, "destroy", "-n", snapshot], capture_output=True, text=True
-            )
-            if result.returncode != 0:
-                failed += 1
-                print(f"preflight_failed={snapshot}", file=sys.stderr)
-                sys.stderr.write(result.stderr)
-
-        if failed:
-            print(f"destroyed_count={destroyed}")
-            print(f"failed_count={failed}")
-            raise SystemExit(1)
-
-        print(f"preflight_count={len(selected)}")
+        selected = eligible[: args.max_candidates]
+        print(f"selected_candidate_count={len(selected)}")
+        print(f"deferred_candidate_count={len(eligible) - len(selected)}")
+        print(f"skipped_candidate_count={len(found) - len(eligible)}")
 
         if args.preflight:
+            for _, snapshot, _ in selected:
+                result = subprocess.run(
+                    [ZFS, "destroy", "-n", snapshot],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    failed += 1
+                    print(f"preflight_failed={snapshot}", file=sys.stderr)
+                    sys.stderr.write(result.stderr)
+            print(f"preflight_count={len(selected) - failed}")
             print(f"destroyed_count={destroyed}")
+            print(f"skipped_count={skipped}")
             print(f"failed_count={failed}")
+            if failed:
+                raise SystemExit(1)
             return
 
         for _, snapshot, _ in selected:
@@ -184,11 +218,16 @@ def main():
             if result.returncode == 0:
                 destroyed += 1
             else:
-                failed += 1
-                print(f"failed={snapshot}", file=sys.stderr)
-                sys.stderr.write(result.stderr)
-                break
+                reason = failure_reason(result.stderr)
+                if reason == "unexpected":
+                    failed += 1
+                    print(f"failed={snapshot}", file=sys.stderr)
+                    sys.stderr.write(result.stderr)
+                else:
+                    skipped += 1
+                    print(f"skipped={snapshot} reason={reason}")
     print(f"destroyed_count={destroyed}")
+    print(f"skipped_count={skipped}")
     print(f"failed_count={failed}")
     if failed:
         raise SystemExit(1)
