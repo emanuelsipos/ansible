@@ -39,5 +39,4 @@
               is search('\\.ts\\.net$')
             )
           }}
-      when: "'pve' not in group_names"
       tags: [tailscale]

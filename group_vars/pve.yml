@@ -9,6 +9,9 @@ pve_sysctl_settings:
 
 pve_sysctl_drop_in_file: "/etc/sysctl.d/99-pve.conf"
 
+tailscale_dns_bootstrap_nameservers:
+  - 192.168.10.1
+
 # zram compressed-swap (systemd-zram-generator). 25% of RAM, zstd, priority 100.
 # ram * 0.25 auto-scales per host (~20G on the 80G node, ~16G on the 64G node);
 # add `host_memory_limit` or a host_vars override to cap it.

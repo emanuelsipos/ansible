@@ -12,7 +12,7 @@ Production inventory and credentials are managed in Semaphore and are not stored
 - `beszel`: Beszel agent installation and configuration
 - `komodo`: Komodo periphery and server configuration
 - `tailscale`: Tailscale installation and enrollment, with systemd-resolved DNS
-  integration on non-PVE Debian-family hosts
+  integration on Debian-family systemd hosts
 - `pve-maintenance`: single-node, report-first PVE `apt-get dist-upgrade`
   maintenance; see its [runbook](playbooks/pve-maintenance/README.md)
 
@@ -126,8 +126,8 @@ uv pip compile \
 
 ## Networking
 
-The `tailscale` play targets the dedicated `tailscale` group. On non-PVE
-Debian-family systemd hosts, it enrolls Tailscale, then configures
+The `tailscale` play targets the dedicated `tailscale` group. On Debian-family
+systemd hosts, it enrolls Tailscale, then configures
 `systemd-resolved` with a persistent drop-in and links `/etc/resolv.conf` to the
 local stub resolver. During migration, the role preserves safe upstream DNS and
 search domains from the current resolver configuration in
