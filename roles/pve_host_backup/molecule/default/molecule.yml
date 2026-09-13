@@ -5,7 +5,7 @@ driver:
   name: docker
 platforms:
   - name: instance
-    image: geerlingguy/docker-debian12-ansible@sha256:324494545c4da6fd1604c3fd702840a37242410254950d855199a4a540e592cf
+    image: geerlingguy/docker-debian12-ansible@sha256:b4344c8d4985d92b6bad512dd8f230a08851aa75bc68da1c315a4a296bab6b67
     pre_build_image: true
     pull: true
     privileged: true
