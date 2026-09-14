@@ -29,14 +29,4 @@
       tags: [tailscale]
 
     - role: tailscale_dns
-      vars:
-        # Preserve SSH when the inventory connection itself uses Tailscale.
-        tailscale_dns_restart_tailscaled: >-
-          {{
-            (not ansible_check_mode)
-            and not (
-              (ansible_host | default(inventory_hostname))
-              is search('\\.ts\\.net$')
-            )
-          }}
       tags: [tailscale]

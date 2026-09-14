@@ -142,9 +142,10 @@ current resolver file contains only Tailscale DNS. Explicit bootstrap variables
 remain available for static hosts or unusual lease locations.
 During a resolver migration, the role can stop `tailscaled` before changing
 `/etc/resolv.conf` and start it after the systemd-resolved stub is active.
-The main Tailscale playbook leaves `tailscaled` running when the inventory
-connection uses a `.ts.net` hostname, so those hosts do not lose their SSH
-connection during the migration; other hosts use the stop/start ordering.
+The `tailscale` group sets `tailscale_dns_restart_tailscaled` to `false`, so
+hosts targeted by this play do not lose their Ansible connection during the
+migration. Hosts with an independent control path can override this variable
+in more specific inventory variables when the stop/start ordering is required.
 The role also installs a `tailscaled.service` drop-in that starts
 `systemd-resolved` first and restores the stub link before Tailscale starts,
 keeping resolver ownership correct across service restarts and reboots.

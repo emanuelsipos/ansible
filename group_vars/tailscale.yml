@@ -1,0 +1,3 @@
+---
+# Preserve the Ansible control connection while migrating resolver ownership.
+tailscale_dns_restart_tailscaled: false
