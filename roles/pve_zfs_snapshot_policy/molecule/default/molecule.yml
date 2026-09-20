@@ -5,7 +5,7 @@ driver:
   name: docker
 platforms:
   - name: io
-    image: geerlingguy/docker-debian12-ansible@sha256:b4344c8d4985d92b6bad512dd8f230a08851aa75bc68da1c315a4a296bab6b67
+    image: geerlingguy/docker-debian12-ansible@sha256:a131e3b7a9a38dda40e98b49b39d6200ffab0ad853c714a513f5eea41bab9a25
     pre_build_image: true
     pull: true
     privileged: true
@@ -20,7 +20,7 @@ platforms:
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
   - name: europa
-    image: geerlingguy/docker-debian12-ansible@sha256:b4344c8d4985d92b6bad512dd8f230a08851aa75bc68da1c315a4a296bab6b67
+    image: geerlingguy/docker-debian12-ansible@sha256:a131e3b7a9a38dda40e98b49b39d6200ffab0ad853c714a513f5eea41bab9a25
     pre_build_image: true
     pull: true
     privileged: true
