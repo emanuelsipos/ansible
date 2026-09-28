@@ -417,16 +417,16 @@ enrich==1.2.7 \
     --hash=sha256:0a2ab0d2931dff8947012602d1234d2a3ee002d9a355b5d70be6bf5466008893 \
     --hash=sha256:f29b2c8c124b4dbd7c975ab5c3568f6c7a47938ea3b7d2106c8a3bd346545e4f
     # via molecule
-filelock==4.0.3 \
-    --hash=sha256:30cd166e2aee2c7534ce2c33c6367c4cd051b8368e20e2c4eb0c34f699bacfab \
-    --hash=sha256:87296d60478e14204fd9406e79831400fef76693bae2895deec236c98e87a8aa
+filelock==4.0.4 \
+    --hash=sha256:0df72be195ca7892216d16f2edce8d9b93a571f02402972020a8cff84c594c7b \
+    --hash=sha256:90999ed63a26ccf86b93b959ab10cf1017f422d816be454ed54cbed263e71ab5
     # via
     #   ansible-lint
     #   python-discovery
     #   virtualenv
-identify==2.6.19 \
-    --hash=sha256:20e6a87f786f768c092a721ad107fc9df0eb89347be9396cadf3f4abbd1fb78a \
-    --hash=sha256:6be5020c38fcb07da56c53733538a3081ea5aa70d36a156f83044bfbf9173842
+identify==2.6.20 \
+    --hash=sha256:6a16b69b93187244e0548cbfd25b3e4a6f9a7a2ad784625c3bec2b8d27b81aaa \
+    --hash=sha256:ad729860a923858d26917c2f4fb0a1d83d27a75b1e090c06440c573f048f3285
     # via pre-commit
 idna==3.20 \
     --hash=sha256:a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44 \
@@ -562,9 +562,9 @@ mypy-extensions==1.1.0 \
     --hash=sha256:1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505 \
     --hash=sha256:52e68efc3284861e772bbcd66823fde5ae21fd2fdb51c62a211403730b916558
     # via black
-nodeenv==1.10.0 \
-    --hash=sha256:5bb13e3eed2923615535339b3c620e76779af4cb4c6a90deccc9e36b274d3827 \
-    --hash=sha256:996c191ad80897d076bdfba80a41994c2b47c68e224c542b48feba42ba00f8bb
+nodeenv==1.11.0 \
+    --hash=sha256:3ce8fe5b71d16e8af7039ca65257354100bc772965d6bc549070649e53b1b146 \
+    --hash=sha256:edaa16e6c14d7cf395d75d4bbd5a26390f4dc06501a33b4e76282b02cc688a25
     # via pre-commit
 packaging==26.3 \
     --hash=sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79 \
@@ -582,9 +582,9 @@ pathspec==1.1.1 \
     #   ansible-lint
     #   black
     #   yamllint
-platformdirs==4.11.14 \
-    --hash=sha256:0e706ec0a73a4ec023d11496153a4b6607a672f4b5027c23c3aefa9c9288c523 \
-    --hash=sha256:c1b1a1eab4f4d1b0eb81754593f1c38de88e84ebe6f93bf6714706a6759074b1
+platformdirs==4.12.0 \
+    --hash=sha256:095be5c143382b1bee917c4f3e9987a0d8d6a582261f1d061ad0c403b7695b5b \
+    --hash=sha256:f6fb2960f2f2eb0870f820f7e49e49e6c0f0589c637f34d33b260b07591327c9
     # via
     #   black
     #   virtualenv
@@ -917,9 +917,9 @@ uv==0.12.19 \
     --hash=sha256:dcbc531a96762569bbfe9639b4f45f00aabff51f427540711f63e7c23f225fdf \
     --hash=sha256:fbb8544089c3a376745acc81400564927f71947a19de6b0a0e0510528cb0dcbb
     # via -r requirements-dev.in
-virtualenv==21.12.1 \
-    --hash=sha256:878db9e963d0ef0b38561a344a4f9b12dc5c7741b6245d7ed10e9291cfea28bc \
-    --hash=sha256:be5a0a62cb2d1529ff6999652e2e7826f95bf7faa9b96b88cc39847c023d90a0
+virtualenv==21.13.0 \
+    --hash=sha256:ca16ceba89e58d8e2f376769349c63f3ed66f79881ae68bc13e19a9d50e0e987 \
+    --hash=sha256:e8aa144aabba43ffd9058e1fd1a02012b1915f8cb915acc16ad50aba9c13bfdc
     # via pre-commit
 wcmatch==11.0.1 \
     --hash=sha256:1ea2b4fa678b8ca268253798d5963935df39132d47c3e241c0a0732224005e7d \
