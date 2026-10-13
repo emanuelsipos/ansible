@@ -45,7 +45,7 @@ jobs:
         # still ENFORCES yaml; the bot just declines to auto-fix it.
         # continue-on-error lets the PR open even if unfixable rules remain.
         continue-on-error: true
-        uses: ansible/ansible-lint@fac2489f3e4ccffa83a40b839770abbf4ab52327  # v26.10.0
+        uses: ansible/ansible-lint@9bce2bfb8f4a984e6b13767bc0d6bf0a49492164  # v26.10.1
         with:
           setup_python: "false"
           args: "--fix=all --skip-list=yaml"
