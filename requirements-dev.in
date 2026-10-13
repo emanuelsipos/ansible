@@ -3,4 +3,4 @@ ansible-lint==26.10.0
 molecule==26.10.0
 molecule-plugins[docker]==26.10.12
 uv==0.13.0
-pre-commit==4.6.2
+pre-commit==4.7.0
