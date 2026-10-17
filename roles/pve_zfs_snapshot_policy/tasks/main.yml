@@ -28,6 +28,9 @@
       - pve_zfs_snapshot_policy_prune_max_candidates is integer
       - pve_zfs_snapshot_policy_prune_max_candidates > 0
       - pve_zfs_snapshot_policy_prune_max_candidates <= 100000
+      - pve_zfs_snapshot_policy_prune_now_max_candidates is integer
+      - pve_zfs_snapshot_policy_prune_now_max_candidates > 0
+      - pve_zfs_snapshot_policy_prune_now_max_candidates <= 100000
       - >-
         pve_zfs_snapshot_policy_scan_lock_file ==
         '/run/lock/pve-zfs-scrub.lock'
@@ -434,6 +437,7 @@
         argv:
           - "{{ pve_zfs_snapshot_policy_prune_helper }}"
           - --execute
+          - "--max-candidates={{ pve_zfs_snapshot_policy_prune_now_max_candidates }}"
       register: _pve_zfs_snapshot_policy_prune_result
       when: >-
         pve_zfs_snapshot_policy_prune_now and

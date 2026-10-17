@@ -61,13 +61,23 @@ pve_zfs_snapshot_policy_host_activation:
 Do not add another host until its report and short creation-only stage have been
 reviewed. The prune calendar is used only where local pruning is enabled. It is
 implemented as a non-persistent systemd timer so a reboot does not launch a
-catch-up cleanup alongside guest startup, backups, or scrubs.
+catch-up cleanup alongside guest startup, backups, or scrubs. Set the scheduled
+candidate limit high enough to exceed the host's snapshot creation rate; a daily
+low limit can create an unbounded retention backlog.
 
-An immediate cleanup additionally requires local pruning to be enabled and:
+An immediate cleanup additionally requires local pruning to be enabled. For a
+reviewed catch-up run, pass both settings as per-run extra vars:
 
 ```yaml
 pve_zfs_snapshot_policy_prune_now: true
+pve_zfs_snapshot_policy_prune_now_max_candidates: 4096
 ```
+
+Keep `pve_zfs_snapshot_policy_prune_now` false in normal inventory. Review the
+candidate report and run a preflight before using the larger immediate limit.
+Without a per-run override, immediate pruning is capped at 256; scheduled
+pruning is controlled separately by
+`pve_zfs_snapshot_policy_prune_max_candidates`.
 
 The locked helper is the only component that performs retention deletion. It
 recognizes only snapshots named

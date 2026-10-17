@@ -120,12 +120,14 @@ pve_zfs_snapshot_policy_host_datasets:
     data3/userdata/photos: userdata
 
 # io completed candidate review, manifest-bound cleanup, and creation testing.
-# Pruning runs once after the daily scrub window; the helper bounds each run.
+# Pruning runs hourly; the helper bounds each run. Use per-run extra vars for
+# larger, reviewed catch-up cleanups rather than raising the immediate limit
+# for every normal configuration run.
 # Unlisted hosts, including europa, remain inactive until separately reviewed.
-pve_zfs_snapshot_policy_prune_calendar: "*-*-* 06:30:00"
-pve_zfs_snapshot_policy_prune_randomized_delay: 10min
+pve_zfs_snapshot_policy_prune_calendar: "*-*-* *:00:00"
+pve_zfs_snapshot_policy_prune_randomized_delay: 5min
 pve_zfs_snapshot_policy_prune_timeout_start_sec: 10min
-pve_zfs_snapshot_policy_prune_max_candidates: 256
+pve_zfs_snapshot_policy_prune_max_candidates: 1024
 pve_zfs_snapshot_policy_host_activation:
   io:
     creation_enabled: true

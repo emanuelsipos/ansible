@@ -35,8 +35,8 @@
         data3/karakeep: app
         data3/proxmox: disabled
         data3/proxmox-backup-server: disabled
-    pve_zfs_snapshot_policy_prune_calendar: "*-*-* 06:30:00"
-    pve_zfs_snapshot_policy_prune_randomized_delay: 10min
+    pve_zfs_snapshot_policy_prune_calendar: "*-*-* *:00:00"
+    pve_zfs_snapshot_policy_prune_randomized_delay: 5min
     pve_zfs_snapshot_policy_prune_timeout_start_sec: 10min
     pve_zfs_snapshot_policy_prune_max_candidates: 2
   tasks:
@@ -111,7 +111,7 @@
             is search('StandardOutput=journal')
           - >-
             pve_zfs_snapshot_policy_units.results[1].content | b64decode
-            is search('OnCalendar=\*-\*-\* 06:30:00')
+            is search('OnCalendar=\*-\*-\* \*:00:00')
           - >-
             pve_zfs_snapshot_policy_units.results[1].content | b64decode
             is search('Persistent=false')
@@ -333,7 +333,7 @@
             creation_enabled: true
             prune_enabled: true
         pve_zfs_snapshot_policy_prune_now: true
-        pve_zfs_snapshot_policy_prune_max_candidates: 100
+        pve_zfs_snapshot_policy_prune_now_max_candidates: 100
       when: inventory_hostname == 'io'
 
     - name: Read explicitly destroyed automatic snapshots

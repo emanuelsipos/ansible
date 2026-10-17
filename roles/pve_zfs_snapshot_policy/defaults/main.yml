@@ -26,6 +26,7 @@ pve_zfs_snapshot_policy_prune_calendar: ""
 pve_zfs_snapshot_policy_prune_randomized_delay: 10min
 pve_zfs_snapshot_policy_prune_timeout_start_sec: 10min
 pve_zfs_snapshot_policy_prune_max_candidates: 256
+pve_zfs_snapshot_policy_prune_now_max_candidates: 256
 pve_zfs_snapshot_policy_host_activation: {}
 pve_zfs_snapshot_policy_prune_now: false
 pve_zfs_snapshot_policy_report_prune_candidates: true
