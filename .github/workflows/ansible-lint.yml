@@ -24,14 +24,14 @@ concurrency:
 jobs:
   build:
     name: Ansible Lint
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7
         with:
-          python-version: "3.14.7"
+          python-version: "3.15.0"
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - name: Install development tooling
@@ -54,7 +54,7 @@ jobs:
             ansible-playbook --syntax-check "$playbook"
           done
       - name: Run ansible-lint
-        uses: ansible/ansible-lint@665d9e07a1943254d2910faffc106adaf7ea7294  # v26.8.0
+        uses: ansible/ansible-lint@9bce2bfb8f4a984e6b13767bc0d6bf0a49492164  # v26.10.1
         with:
           setup_python: "false"
       - name: Ping healthchecks

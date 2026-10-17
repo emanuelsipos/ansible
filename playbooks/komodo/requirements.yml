@@ -4,4 +4,4 @@ roles:
     src: https://github.com/bpbradley/ansible-role-komodo.git
     scm: git
     # No release tags are published upstream; Renovate tracks the main branch digest.
-    version: "8b72481e98ab5bd73617a861623aa9ef7f82ddaf"
+    version: "48b31292751b6fd3968b3788f76e1a12de968d54"
