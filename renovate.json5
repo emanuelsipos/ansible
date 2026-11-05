@@ -30,7 +30,7 @@
   },
   "constraints": {
     "python": "=3.15.2",
-    "uv": "==0.13.4"
+    "uv": "==0.13.7"
   },
   "packageRules": [
     {
