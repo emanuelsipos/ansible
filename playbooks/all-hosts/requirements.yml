@@ -9,6 +9,6 @@ roles:
   - name: brianhartsock.smartmontools
     version: "v1.0.1"
   - name: geerlingguy.docker
-    version: "8.0.0"
+    version: "8.0.1"
   - name: hifis.unattended_upgrades
     version: "v3.2.1"
