@@ -1,172 +1,174 @@
 {
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:best-practices"
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:best-practices',
   ],
-  "osvVulnerabilityAlerts": true,
-  "dependencyDashboard": true,
-  "dependencyDashboardTitle": "Renovate Dashboard",
-  "assignees": [
-    "emanuelsipos"
+  osvVulnerabilityAlerts: true,
+  dependencyDashboard: {
+    enabled: true,
+    title: 'Renovate Dashboard',
+  },
+  assignees: [
+    'emanuelsipos',
   ],
-  "labels": [
-    "renovate"
+  labels: [
+    'renovate',
   ],
-  "configMigration": true,
-  "prHourlyLimit": 0,
-  "prConcurrentLimit": 0,
-  "ansible-galaxy": {
-    "managerFilePatterns": [
-      "/(^|/)requirements\\.yml$/"
-    ]
+  configMigration: true,
+  prHourlyLimit: 0,
+  prConcurrentLimit: 0,
+  'ansible-galaxy': {
+    managerFilePatterns: [
+      '/(^|/)requirements\\.yml$/',
+    ],
   },
-  "pip-compile": {
-    "managerFilePatterns": [
-      "/(^|/)requirements-dev\\.txt$/"
-    ]
+  'pip-compile': {
+    managerFilePatterns: [
+      '/(^|/)requirements-dev\\.txt$/',
+    ],
   },
-  "pip_requirements": {
-    "enabled": false
+  pip_requirements: {
+    enabled: false,
   },
-  "constraints": {
-    "python": "=3.15.2",
-    "uv": "==0.13.9"
+  constraints: {
+    python: '=3.15.2',
+    uv: '==0.13.9',
   },
-  "packageRules": [
+  packageRules: [
     {
-      "matchManagers": [
-        "github-actions"
+      matchManagers: [
+        'github-actions',
       ],
-      "automerge": true,
-      "automergeType": "pr",
-      "addLabels": [
-        "github-actions"
-      ]
+      automerge: true,
+      automergeType: 'pr',
+      addLabels: [
+        'github-actions',
+      ],
     },
     {
-      "matchManagers": [
-        "github-actions",
-        "renovate-config"
+      matchManagers: [
+        'github-actions',
+        'renovate-config',
       ],
-      "matchDepNames": [
-        "python"
+      matchDepNames: [
+        'python',
       ],
-      "groupName": "Python runtime",
-      "groupSlug": "python-runtime",
-      "automerge": true,
-      "automergeType": "pr"
+      groupName: 'Python runtime',
+      groupSlug: 'python-runtime',
+      automerge: true,
+      automergeType: 'pr',
     },
     {
-      "matchManagers": [
-        "ansible-galaxy"
+      matchManagers: [
+        'ansible-galaxy',
       ],
-      "automerge": true,
-      "automergeType": "pr",
-      "addLabels": [
-        "ansible"
-      ]
+      automerge: true,
+      automergeType: 'pr',
+      addLabels: [
+        'ansible',
+      ],
     },
     {
-      "matchManagers": [
-        "ansible-galaxy"
+      matchManagers: [
+        'ansible-galaxy',
       ],
-      "matchDepNames": [
-        "bpbradley.komodo"
+      matchDepNames: [
+        'bpbradley.komodo',
       ],
-      "enabled": false
+      enabled: false,
     },
     {
-      "matchManagers": [
-        "pip-compile"
+      matchManagers: [
+        'pip-compile',
       ],
-      "automerge": true,
-      "automergeType": "pr",
-      "addLabels": [
-        "python"
-      ]
+      automerge: true,
+      automergeType: 'pr',
+      addLabels: [
+        'python',
+      ],
     },
     {
-      "matchManagers": [
-        "pip-compile",
-        "renovate-config"
+      matchManagers: [
+        'pip-compile',
+        'renovate-config',
       ],
-      "matchDepNames": [
-        "uv"
+      matchDepNames: [
+        'uv',
       ],
-      "groupName": "uv",
-      "groupSlug": "uv",
-      "automerge": true,
-      "automergeType": "pr"
+      groupName: 'uv',
+      groupSlug: 'uv',
+      automerge: true,
+      automergeType: 'pr',
     },
     {
-      "matchManagers": [
-        "custom.regex"
+      matchManagers: [
+        'custom.regex',
       ],
-      "automerge": true,
-      "automergeType": "pr",
-      "addLabels": [
-        "pins"
-      ]
-    }
+      automerge: true,
+      automergeType: 'pr',
+      addLabels: [
+        'pins',
+      ],
+    },
   ],
-  "customDatasources": {
-    "static-curl-amd64": {
-      "defaultRegistryUrlTemplate": "https://api.github.com/repos/moparisthebest/static-curl/releases?per_page=100",
-      "format": "json",
-      "transformTemplates": [
-        "{\"releases\": [$map($filter($, function($r) { $count($r.assets[name = \"curl-amd64\" and $boolean($match($string(digest), /^sha256:[a-f0-9]{64}$/))]) > 0 }), function($r) { ($a := $r.assets[name = \"curl-amd64\"][0]; {\"version\": $r.tag_name, \"digest\": $replace($a.digest, /^sha256:/, \"\"), \"releaseTimestamp\": $r.published_at}) })]}"
-      ]
-    }
+  customDatasources: {
+    'static-curl-amd64': {
+      defaultRegistryUrlTemplate: 'https://api.github.com/repos/moparisthebest/static-curl/releases?per_page=100',
+      format: 'json',
+      transformTemplates: [
+        '{"releases": [$map($filter($, function($r) { $count($r.assets[name = "curl-amd64" and $boolean($match($string(digest), /^sha256:[a-f0-9]{64}$/))]) > 0 }), function($r) { ($a := $r.assets[name = "curl-amd64"][0]; {"version": $r.tag_name, "digest": $replace($a.digest, /^sha256:/, ""), "releaseTimestamp": $r.published_at}) })]}',
+      ],
+    },
   },
-  "customManagers": [
+  customManagers: [
     {
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/playbooks/all-hosts/playbook\\.yml$/",
-        "/roles/github_release_download/examples/playbook\\.yml$/"
+      customType: 'regex',
+      managerFilePatterns: [
+        '/playbooks/all-hosts/playbook\\.yml$/',
+        '/roles/github_release_download/examples/playbook\\.yml$/',
       ],
-      "matchStrings": [
-        "github_release_download_repo: \"moparisthebest/static-curl\"\\n\\s+github_release_download_asset: \"curl-amd64\"\\n\\s+github_release_download_version: \"(?<currentValue>v[^\"\\s]+)\"\\n\\s+github_release_download_checksum: \"sha256:(?<currentDigest>[a-f0-9]{64})\""
+      matchStrings: [
+        'github_release_download_repo: "moparisthebest/static-curl"\\n\\s+github_release_download_asset: "curl-amd64"\\n\\s+github_release_download_version: "(?<currentValue>v[^"\\s]+)"\\n\\s+github_release_download_checksum: "sha256:(?<currentDigest>[a-f0-9]{64})"',
       ],
-      "depNameTemplate": "static-curl amd64",
-      "packageNameTemplate": "moparisthebest/static-curl",
-      "datasourceTemplate": "custom.static-curl-amd64",
-      "versioningTemplate": "semver-coerced"
+      depNameTemplate: 'static-curl amd64',
+      packageNameTemplate: 'moparisthebest/static-curl',
+      datasourceTemplate: 'custom.static-curl-amd64',
+      versioningTemplate: 'semver-coerced',
     },
     {
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/(^|/)playbooks/komodo/requirements\\.yml$/"
+      customType: 'regex',
+      managerFilePatterns: [
+        '/(^|/)playbooks/komodo/requirements\\.yml$/',
       ],
-      "matchStrings": [
-        "name: bpbradley\\.komodo\\n\\s+src: https://github\\.com/bpbradley/ansible-role-komodo\\.git\\n\\s+scm: git\\n(?:\\s+#.*\\n)?\\s+version: \"(?<currentDigest>[a-f0-9]{40})\""
+      matchStrings: [
+        'name: bpbradley\\.komodo\\n\\s+src: https://github\\.com/bpbradley/ansible-role-komodo\\.git\\n\\s+scm: git\\n(?:\\s+#.*\\n)?\\s+version: "(?<currentDigest>[a-f0-9]{40})"',
       ],
-      "depNameTemplate": "bpbradley.komodo",
-      "packageNameTemplate": "https://github.com/bpbradley/ansible-role-komodo.git",
-      "currentValueTemplate": "main",
-      "datasourceTemplate": "git-refs"
+      depNameTemplate: 'bpbradley.komodo',
+      packageNameTemplate: 'https://github.com/bpbradley/ansible-role-komodo.git',
+      currentValueTemplate: 'main',
+      datasourceTemplate: 'git-refs',
     },
     {
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/(^|/)roles/[^/]+/molecule/[^/]+/molecule\\.yml$/"
+      customType: 'regex',
+      managerFilePatterns: [
+        '/(^|/)roles/[^/]+/molecule/[^/]+/molecule\\.yml$/',
       ],
-      "matchStrings": [
-        "image: (?<depName>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      matchStrings: [
+        'image: (?<depName>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]{64})',
       ],
-      "packageNameTemplate": "{{{depName}}}",
-      "currentValueTemplate": "latest",
-      "datasourceTemplate": "docker",
-      "versioningTemplate": "docker"
-    }
+      packageNameTemplate: '{{{depName}}}',
+      currentValueTemplate: 'latest',
+      datasourceTemplate: 'docker',
+      versioningTemplate: 'docker',
+    },
   ],
-  "ignorePaths": [
-    "**/node_modules/**",
-    "**/bower_components/**",
-    "**/vendor/**",
-    "**/__tests__/**",
-    "**/test/**",
-    "**/tests/**",
-    "**/__fixtures__/**"
-  ]
+  ignorePaths: [
+    '**/node_modules/**',
+    '**/bower_components/**',
+    '**/vendor/**',
+    '**/__tests__/**',
+    '**/test/**',
+    '**/tests/**',
+    '**/__fixtures__/**',
+  ],
 }
